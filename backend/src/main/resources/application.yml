@@ -1,0 +1,6 @@
+server:
+  port: 8080
+
+app:
+  mqtt:
+    brokerUrl: ${MQTT_BROKER_URL:tcp://localhost:1883}
