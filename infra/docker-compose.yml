@@ -30,5 +30,19 @@ services:
     depends_on:
       - mqtt
 
+  backend:
+    build: ../backend
+    container_name: backend
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/robotops
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+      MQTT_BROKER_URL: tcp://mqtt:1883
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+      - mqtt
+
 volumes:
   pgdata:
