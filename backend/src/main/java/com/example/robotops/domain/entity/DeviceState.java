@@ -3,30 +3,43 @@ package com.example.robotops.domain.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Getter
-@Builder
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
-@AllArgsConstructor
-@Table(name ="device_state")
 @Entity
+@Table(
+        name = "device_state",
+        indexes = {
+                    @Index(
+                            name = "idx_device_state_seen",
+                            columnList = "last_seen_at"
+                    )
+            }
+    )
+@AllArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class DeviceState {
 
     @EmbeddedId
     private DeviceStateId id;
 
-    @Column(name = "site_id")
+    @Column(name = "site_id", nullable = false, length = 100)
     private String siteId;
 
+    @Column(name = "online")
     private Boolean online;
+
+    @Column(name = "mode", length = 30)
     private String mode;
+
+    @Column(name = "mission", length = 50)
     private String mission;
 
     @Column(name = "battery_pct")
@@ -41,14 +54,12 @@ public class DeviceState {
     @Column(name = "pos_y")
     private Double posY;
 
-    // 회전값(degree)
     @Column(name = "theta")
     private Double theta;
 
-    @Column(name = "map_id")
+    @Column(name = "map_id", length = 100)
     private String mapId;
 
-    /** 장비 헬스 영역 */
     @Column(name = "cpu_pct")
     private Double cpuPct;
 
@@ -58,21 +69,30 @@ public class DeviceState {
     @Column(name = "temp_c")
     private Double tempC;
 
-    /** 안전 상태 영역 */
+    // 비상정지버튼 눌림 여부
+    @Column(name = "estop")
     private Boolean estop;
-    // 비상정지 버튼 눌림 여부
-    private Boolean bumper;
-    // 충돌 감지 여부
-    private Boolean obstacle;
-    // 장애물 감지 여부
 
-    // 마지막 메세지 순번
-    @Column(name = "last_seq")
+    // 충돌 여부
+    @Column(name = "bumper")
+    private Boolean bumper;
+
+    // 장애물 감지 여부
+    @Column(name = "obstacle")
+    private Boolean obstacle;
+
+    @Column(name = "error_code")
+    private String errorCode;
+
+    @Column(name = "last_seq", nullable = false)
     private Long lastSeq;
 
     // 마지막 telemetry 수신 시각
-    @Column(name = "last_seen_at")
+    @Column(name = "last_seen_at", nullable = false)
     private OffsetDateTime lastSeenAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
 
     public boolean isDisconnected() {
         return lastSeenAt == null ||

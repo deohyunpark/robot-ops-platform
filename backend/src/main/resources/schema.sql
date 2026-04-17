@@ -17,10 +17,6 @@ create table if not exists telemetry_raw (
 
     battery_pct     numeric(5,2),
     temp_c          numeric(6,2),
-    pose_x          numeric(12,3),
-    pose_y          numeric(12,3),
-
-    error_code      varchar(100),
 
     raw_json        jsonb not null,
 
@@ -42,51 +38,43 @@ create index if not exists idx_telemetry_raw_site_ts
 -- 로봇별 현재 상태 1줄 유지
 -- -----------------------------
 create table if not exists device_state (
+
                                             device_type     varchar(30) not null,
-    device_id       varchar(50) not null,
+    device_id       varchar(100) not null,
 
     site_id         varchar(100) not null,
 
-    is_online       boolean not null default true,
-
-    battery_pct     numeric(5,2),
-    temp_c          numeric(6,2),
-
-    pose_x          numeric(12,3),
-    pose_y          numeric(12,3),
-
+    online          boolean,
     mode            varchar(30),
     mission         varchar(50),
 
-    error_code      varchar(100),
+    battery_pct     numeric(10,2),
+    speed_mps       numeric(10,3),
 
+    pos_x           numeric(12,3),
+    pos_y           numeric(12,3),
+    theta           numeric(12,4),
+    map_id          varchar(100),
+
+    cpu_pct         numeric(10,2),
+    mem_pct         numeric(10,2),
+    temp_c          numeric(10,2),
+
+    estop           boolean,
+    bumper          boolean,
+    obstacle        boolean,
+
+    error_code      varchar(30),
+
+    last_seq        bigint not null,
     last_seen_at    timestamptz not null,
+
     updated_at      timestamptz not null default now(),
 
     primary key (device_type, device_id)
     );
 
-create index if not exists idx_device_state_site
-    on device_state(site_id);
-
-create index if not exists idx_device_state_last_seen
+create index if not exists idx_device_state_seen
     on device_state(last_seen_at desc);
 
 
-
--- -----------------------------
--- 3. 샘플 조회용 View (선택)
--- -----------------------------
-create or replace view v_robot_summary as
-select
-    device_id,
-    site_id,
-    is_online,
-    battery_pct,
-    temp_c,
-    mode,
-    mission,
-    error_code,
-    last_seen_at
-from device_state
-where device_type = 'ROBOT';
