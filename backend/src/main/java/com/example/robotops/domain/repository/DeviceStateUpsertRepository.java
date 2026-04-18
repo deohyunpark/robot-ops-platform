@@ -63,7 +63,7 @@ public class DeviceStateUpsertRepository {
             :errorCode,
             :lastSeq,
             CAST(:lastSeenAt AS timestamptz),
-            now()
+            :updatedAt
         )
         on conflict (device_type, device_id)
         do update set
@@ -85,7 +85,7 @@ public class DeviceStateUpsertRepository {
             error_code = excluded.error_code,
             last_seq = excluded.last_seq,
             last_seen_at = excluded.last_seen_at,
-            updated_at = now() 
+            updated_at = now()
         """;
 
         namedJdbcTemplate.update(sql, new BeanPropertySqlParameterSource(request));

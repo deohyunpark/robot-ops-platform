@@ -37,6 +37,8 @@ public class TelemetryRepository {
             :temp,
             CAST(:rawJson AS jsonb)
         )
+        on conflict (device_id, msg_id)
+        do nothing
     """;
 
         namedJdbcTemplate.update(sql, new BeanPropertySqlParameterSource(request));

@@ -2,15 +2,12 @@ package com.example.robotops.application.telemetry.service;
 
 import com.example.robotops.application.telemetry.repository.TelemetryRepository;
 import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
-import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
 import com.example.robotops.application.telemetry.request.payload.TopicInfo;
 import com.example.robotops.domain.repository.DeviceStateUpsertRepository;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import com.example.robotops.infra.mqtt.MqttParser;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.robotops.infra.redis.RedisService;
 import jakarta.transaction.Transactional;
-import java.io.IOException;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
@@ -26,6 +23,7 @@ public class TelemetryService {
     private final MqttParser mqttParser;
     private final TelemetryRepository telemetryRepository;
     private final DeviceStateUpsertRepository deviceStateUpsertRepository;
+    private final RedisService redisService;
 
     @Transactional
     public void process(String topic, MqttMessage message) {
@@ -45,7 +43,8 @@ public class TelemetryService {
                     DeviceStateRequest deviceStateRequest = DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload);
                     deviceStateUpsertRepository.upsert(deviceStateRequest);
                     log.info("[DB] upserted = {}", deviceStateRequest.deviceId());
-
+                    redisService.saveState(deviceStateRequest);
+                    log.info("[Redis] device state/lastSeen saved = {}", deviceStateRequest.deviceId());
                 }
         );
 

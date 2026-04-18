@@ -16,6 +16,13 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+  
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: always
 
   simulator:
     build: ../simulator
@@ -38,11 +45,15 @@ services:
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: app
       MQTT_BROKER_URL: tcp://mqtt:1883
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
     ports:
       - "8080:8080"
     depends_on:
       - db
       - mqtt
+      - redis
+  
 
 volumes:
   pgdata:

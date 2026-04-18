@@ -51,6 +51,7 @@ public record DeviceStateRequest(
                 .errorCode(p.errors().toString())
                 .lastSeq(p.seq().longValue())
                 .lastSeenAt(p.ts())
+                .updatedAt(OffsetDateTime.now())
                 .build();
     }
 }
