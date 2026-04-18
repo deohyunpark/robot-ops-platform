@@ -6,9 +6,11 @@ import com.example.robotops.application.telemetry.request.payload.TelemetryPaylo
 import com.example.robotops.application.telemetry.request.payload.TopicInfo;
 import com.example.robotops.domain.repository.DeviceStateUpsertRepository;
 import com.example.robotops.domain.request.DeviceStateRequest;
+import com.example.robotops.infra.mqtt.MqttParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import java.io.IOException;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
@@ -21,7 +23,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TelemetryService {
 
-    private final ObjectMapper om = new ObjectMapper();
+    private final MqttParser mqttParser;
     private final TelemetryRepository telemetryRepository;
     private final DeviceStateUpsertRepository deviceStateUpsertRepository;
 
@@ -34,37 +36,18 @@ public class TelemetryService {
          * 4. 이벤트 감지
          */
 
-        // mqtt 에서 payload 추출
-        TelemetryPayload tp = null;
-        try {
-            tp = om.readValue(message.getPayload(), TelemetryPayload.class);
-        } catch (IOException e) {
-            log.error("mqtt parse failed", e);
-            return;
-        }
+        mqttParser.parse(topic, message).ifPresent(
+                telemetryPayload -> {
+                    TelemetryRawRequest telemetryRawRequest = TelemetryRawRequest.of(TopicInfo.of(topic), telemetryPayload, message.getPayload());
+                    telemetryRepository.save(telemetryRawRequest);
+                    log.info("[DB] inserted = {}", telemetryRawRequest.deviceId());
 
-        TelemetryRawRequest telemetryRawRequest = TelemetryRawRequest.of(TopicInfo.of(topic), tp, message.getPayload());
+                    DeviceStateRequest deviceStateRequest = DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload);
+                    deviceStateUpsertRepository.upsert(deviceStateRequest);
+                    log.info("[DB] upserted = {}", deviceStateRequest.deviceId());
 
-        telemetryRepository.save(telemetryRawRequest);
-        System.out.println(telemetryRawRequest);
-        log.info("[DB] inserted = {}", telemetryRawRequest.deviceId());
-
-        DeviceStateRequest deviceStateRequest = DeviceStateRequest.of(TopicInfo.of(topic), tp);
-        deviceStateUpsertRepository.upsert(deviceStateRequest);
-        System.out.println(deviceStateRequest);
-        log.info("[DB] upserted = {}", deviceStateRequest.batteryPct());
-    }
-
-
-    private void deviceStateSave() {
-        // id 당 하나만 저장
-        //최신 업데이트
+                }
+        );
 
     }
-
-    private void detectEvents() {
-
-    }
-
-
 }
