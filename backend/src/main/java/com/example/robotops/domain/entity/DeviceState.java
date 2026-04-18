@@ -101,14 +101,6 @@ public class DeviceState {
                 );
     }
 
-    public boolean isLowBattery() {
-        return batteryPct != null && batteryPct < 20;
-    }
-
-    public boolean isOverheated() {
-        return tempC != null && tempC >= 80;
-    }
-
     public boolean isEmergency() {
         return Boolean.TRUE.equals(estop)
                 || Boolean.TRUE.equals(bumper)
@@ -117,6 +109,14 @@ public class DeviceState {
 
     public boolean isIdle() {
         return "IDLE".equalsIgnoreCase(mission);
+    }
+
+    public boolean isLowBattery(Double batteryPct) {
+        return batteryPct != null && batteryPct < 20;
+    }
+
+    public boolean isOverheated(Double tempC) {
+        return tempC != null && tempC >= 80;
     }
 
     public boolean isCharging() {

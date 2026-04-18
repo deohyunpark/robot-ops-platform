@@ -23,4 +23,13 @@ public class RedisService {
                 .set("device:" + req.deviceId() + ":lastSeen",
                         String.valueOf(System.currentTimeMillis()));
     }
+
+    // mqtt 수신시
+    public void updateHeartbeat(String deviceId) {
+
+        long now = System.currentTimeMillis();
+
+        stringRedisTemplate.opsForZSet()
+                .add("device:lastSeen:zset", deviceId, now);
+    }
 }

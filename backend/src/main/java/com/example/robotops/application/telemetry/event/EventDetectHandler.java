@@ -2,9 +2,11 @@ package com.example.robotops.application.telemetry.event;
 
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
-import java.sql.Time;
-import jdk.jfr.Threshold;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
 
+@Service
+@RequiredArgsConstructor
 public class EventDetectHandler {
 
     /**
@@ -28,4 +30,13 @@ public class EventDetectHandler {
          공통분모 TelemetryRawData,
         */
     }
+
+    private void alphaEvent(TelemetryPayload tp) {
+    }
+
+    private void isDisconnected() {
+    }
+
+
+
 }
