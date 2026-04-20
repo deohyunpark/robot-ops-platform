@@ -24,13 +24,20 @@ public class OfflineDetectorScheduler {
     private final JsonUtil jsonUtil;
 
     private static final String KEY = "device:lastSeen:zset";
-    private static final long TIMEOUT = 3 * 60 * 1000; // 3분
+    private static final long TIMEOUT = 10 * 1000; // 10초
+    /**
+     * 시뮬레이터 기준 타임아웃 잡는게 오래걸려서 임시로 10초
+     * todo : 테스트 후 시뮬레이터를 수정(타임아웃 길게 유지)
+    */
 
-    @Scheduled(fixedRate = 5000) // 5초마다 체크
+    @Scheduled(fixedRate = 2000) // 2초마다 체크
     public void detectOffline() {
 
         long now = System.currentTimeMillis();
         long threshold = now - TIMEOUT;
+
+
+        log.info("[SCHEDULER] detectOffline running");
 
         // 1. OFFLINE 대상 조회
         Set<String> offlineDevices =
@@ -56,8 +63,8 @@ public class OfflineDetectorScheduler {
                             deviceId,
                             EventType.OFFLINE,
                             Severity.CRITICAL,
-                            jsonUtil.toJson(Map.of("lastSeen", lastSeen,
-                                    "now", System.currentTimeMillis())))
+                            Map.of("lastSeen", lastSeen,
+                                    "now", System.currentTimeMillis()))
 
                     );
 

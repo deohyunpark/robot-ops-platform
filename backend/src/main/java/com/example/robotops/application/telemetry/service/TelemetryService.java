@@ -45,6 +45,7 @@ public class TelemetryService {
                     log.info("[DB] upserted = {}", deviceStateRequest.deviceId());
                     redisService.saveState(deviceStateRequest);
                     log.info("[Redis] device state/lastSeen saved = {}", deviceStateRequest.deviceId());
+                    redisService.updateHeartbeat(deviceStateRequest.deviceId());
                 }
         );
 

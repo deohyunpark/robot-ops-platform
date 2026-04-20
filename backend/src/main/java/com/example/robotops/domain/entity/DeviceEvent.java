@@ -10,15 +10,17 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Getter
 @Builder
@@ -44,12 +46,13 @@ public class DeviceEvent {
     private Severity severity;
 
     @Column(columnDefinition = "jsonb")
-    private String payload;
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, Object> payload;
 
     @CreationTimestamp
     private OffsetDateTime createdAt;
 
-    public static DeviceEvent of(String deviceId, EventType eventType, Severity severity, String payload) {
+    public static DeviceEvent of(String deviceId, EventType eventType, Severity severity, Map<String, Object> payload) {
         return DeviceEvent.builder()
                 .deviceId(deviceId)
                 .eventType(eventType)
