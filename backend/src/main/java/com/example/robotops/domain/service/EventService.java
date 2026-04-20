@@ -4,7 +4,6 @@ import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.repository.DeviceEventRepository;
 import com.example.robotops.infra.websocket.WebsocketService;
 import jakarta.transaction.Transactional;
-import java.nio.file.WatchService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 

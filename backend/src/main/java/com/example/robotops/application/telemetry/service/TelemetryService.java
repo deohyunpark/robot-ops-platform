@@ -5,6 +5,7 @@ import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
 import com.example.robotops.application.telemetry.request.payload.TopicInfo;
 import com.example.robotops.domain.repository.DeviceStateUpsertRepository;
 import com.example.robotops.domain.request.DeviceStateRequest;
+import com.example.robotops.infra.kafka.consumer.KafkaProducer;
 import com.example.robotops.infra.mqtt.MqttParser;
 import com.example.robotops.infra.redis.RedisService;
 import jakarta.transaction.Transactional;
@@ -21,9 +22,7 @@ import org.springframework.stereotype.Service;
 public class TelemetryService {
 
     private final MqttParser mqttParser;
-    private final TelemetryRepository telemetryRepository;
-    private final DeviceStateUpsertRepository deviceStateUpsertRepository;
-    private final RedisService redisService;
+    private final KafkaProducer kafkaProducer;
 
     @Transactional
     public void process(String topic, MqttMessage message) {
@@ -36,16 +35,9 @@ public class TelemetryService {
 
         mqttParser.parse(topic, message).ifPresent(
                 telemetryPayload -> {
-                    TelemetryRawRequest telemetryRawRequest = TelemetryRawRequest.of(TopicInfo.of(topic), telemetryPayload, message.getPayload());
-                    telemetryRepository.save(telemetryRawRequest);
-                    log.info("[DB] inserted = {}", telemetryRawRequest.deviceId());
-
-                    DeviceStateRequest deviceStateRequest = DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload);
-                    deviceStateUpsertRepository.upsert(deviceStateRequest);
-                    log.info("[DB] upserted = {}", deviceStateRequest.deviceId());
-                    redisService.saveState(deviceStateRequest);
-                    log.info("[Redis] device state/lastSeen saved = {}", deviceStateRequest.deviceId());
-                    redisService.updateHeartbeat(deviceStateRequest.deviceId());
+                    System.out.println("Mqtt 수신");
+                    kafkaProducer.sendTelemetry(TelemetryRawRequest.of(TopicInfo.of(topic), telemetryPayload, message.getPayload()));
+                    kafkaProducer.sendDeviceState(DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload));
                 }
         );
 
