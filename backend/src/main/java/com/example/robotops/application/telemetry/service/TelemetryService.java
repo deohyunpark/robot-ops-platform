@@ -1,13 +1,10 @@
 package com.example.robotops.application.telemetry.service;
 
-import com.example.robotops.application.telemetry.repository.TelemetryRepository;
 import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
 import com.example.robotops.application.telemetry.request.payload.TopicInfo;
-import com.example.robotops.domain.repository.DeviceStateUpsertRepository;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import com.example.robotops.infra.kafka.consumer.KafkaProducer;
 import com.example.robotops.infra.mqtt.MqttParser;
-import com.example.robotops.infra.redis.RedisService;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +32,7 @@ public class TelemetryService {
 
         mqttParser.parse(topic, message).ifPresent(
                 telemetryPayload -> {
-                    System.out.println("Mqtt 수신");
+                    kafkaProducer.sendDashBoard(telemetryPayload);
                     kafkaProducer.sendTelemetry(TelemetryRawRequest.of(TopicInfo.of(topic), telemetryPayload, message.getPayload()));
                     kafkaProducer.sendDeviceState(DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload));
                 }

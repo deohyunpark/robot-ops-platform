@@ -1,6 +1,7 @@
 package com.example.robotops.infra.kafka.consumer;
 
 import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
+import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import com.example.robotops.infra.redis.JsonUtil;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,14 @@ public class KafkaProducer {
                 "robot.device.state",
                 deviceStateRequest.deviceId(),
                 jsonUtil.toJson(deviceStateRequest)
+        );
+    }
+
+    public void sendDashBoard(TelemetryPayload telemetryPayload) {
+        template.send(
+                "robot.device.dash-board",
+                telemetryPayload.robotId(),
+                jsonUtil.toJson(telemetryPayload)
         );
     }
 }
