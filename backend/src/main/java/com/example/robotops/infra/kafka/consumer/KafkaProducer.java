@@ -19,7 +19,7 @@ public class KafkaProducer {
         template.send(
                 "robot.telemetry.raw",
                 telemetryRawRequest.deviceId(),
-                jsonUtil.toJson(telemetryRawRequest)
+                jsonUtil.toJson(telemetryRawRequest.deviceId())
         );
     }
 
@@ -27,13 +27,21 @@ public class KafkaProducer {
         template.send(
                 "robot.device.state",
                 deviceStateRequest.deviceId(),
-                jsonUtil.toJson(deviceStateRequest)
+                jsonUtil.toJson(deviceStateRequest.deviceId())
         );
     }
 
     public void sendDashBoard(TelemetryPayload telemetryPayload) {
         template.send(
                 "robot.device.dash-board",
+                telemetryPayload.robotId(),
+                jsonUtil.toJson(telemetryPayload.robotId())
+        );
+    }
+
+    public void sendDeviceEvent(TelemetryPayload telemetryPayload) {
+        template.send(
+                "robot.device.event",
                 telemetryPayload.robotId(),
                 jsonUtil.toJson(telemetryPayload)
         );

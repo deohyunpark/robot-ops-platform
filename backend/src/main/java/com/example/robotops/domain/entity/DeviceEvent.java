@@ -2,7 +2,6 @@ package com.example.robotops.domain.entity;
 
 import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.deviceStateType.Severity;
-import com.example.robotops.infra.redis.JsonUtil;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

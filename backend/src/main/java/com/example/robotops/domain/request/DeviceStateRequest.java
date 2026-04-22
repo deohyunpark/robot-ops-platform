@@ -2,6 +2,9 @@ package com.example.robotops.domain.request;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
 import com.example.robotops.application.telemetry.request.payload.TopicInfo;
+import com.example.robotops.domain.deviceStateType.Mission;
+import com.example.robotops.domain.deviceStateType.Mode;
+import com.example.robotops.global.errorMessage.StringEnum;
 import java.time.OffsetDateTime;
 import lombok.Builder;
 
@@ -10,8 +13,8 @@ public record DeviceStateRequest(
         String deviceId,
         String siteId,
         Boolean online,
-        String mode,
-        String mission,
+        Mode mode,
+        Mission mission,
         Double batteryPct,
         Double speedMps,
         Double posX,
@@ -34,8 +37,8 @@ public record DeviceStateRequest(
                 .siteId(ti.siteId())
                 .deviceId(p.robotId())
                 .online(p.state().online())
-                .mode(p.state().mode())
-                .mission(p.state().mission())
+                .mode(StringEnum.from(Mode.class, p.state().mode()))
+                .mission(StringEnum.from(Mission.class, p.state().mission()))
                 .batteryPct(p.state().batteryPct())
                 .speedMps(p.state().speedMps())
                 .posX(p.pose().x())

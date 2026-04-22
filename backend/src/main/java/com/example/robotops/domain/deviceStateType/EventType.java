@@ -15,7 +15,8 @@ public enum EventType {
     COLLISION,
     OBSTACLE,
 
+    IDLE,
+    CHARGING,
+
     ERROR
-
-
 }

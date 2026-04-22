@@ -1,10 +1,13 @@
 package com.example.robotops.domain.entity;
 
+import com.example.robotops.domain.deviceStateType.Mission;
+import com.example.robotops.domain.deviceStateType.Mode;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Index;
-import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import lombok.AccessLevel;
@@ -36,11 +39,13 @@ public class DeviceState {
     @Column(name = "online")
     private Boolean online;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "mode", length = 30)
-    private String mode;
+    private Mode mode;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "mission", length = 50)
-    private String mission;
+    private Mission mission;
 
     @Column(name = "battery_pct")
     private Double batteryPct;
@@ -94,32 +99,4 @@ public class DeviceState {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
-    public boolean isDisconnected() {
-        return lastSeenAt == null ||
-                lastSeenAt.isBefore(
-                        OffsetDateTime.now().minusSeconds(5)
-                );
-    }
-
-    public boolean isEmergency() {
-        return Boolean.TRUE.equals(estop)
-                || Boolean.TRUE.equals(bumper)
-                || Boolean.TRUE.equals(obstacle);
-    }
-
-    public boolean isIdle() {
-        return "IDLE".equalsIgnoreCase(mission);
-    }
-
-    public boolean isLowBattery(Double batteryPct) {
-        return batteryPct != null && batteryPct < 20;
-    }
-
-    public boolean isOverheated(Double tempC) {
-        return tempC != null && tempC >= 80;
-    }
-
-    public boolean isCharging() {
-        return "CHARGE".equalsIgnoreCase(mission);
-    }
 }
