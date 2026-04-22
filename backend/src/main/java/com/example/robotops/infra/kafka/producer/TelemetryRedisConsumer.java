@@ -25,6 +25,15 @@ public class TelemetryRedisConsumer {
         log.info("[Redis] device state/lastSeen saved = {}", deviceStateRequest.deviceId());
 
         redisService.updateHeartbeat(deviceStateRequest.deviceId());
+
+        // todo : 엥
+        // 지속성
+        redisService.updateMetric(deviceStateRequest.deviceId(), "temp", deviceStateRequest.tempC());
+        redisService.updateMetric(deviceStateRequest.deviceId(), "cpu", deviceStateRequest.cpuPct());
+
+        // 변화값
+        redisService.updateWindow(deviceStateRequest.deviceId(), "battery", deviceStateRequest.batteryPct());
+        redisService.updateWindow(deviceStateRequest.deviceId(), "speed", deviceStateRequest.speedMps());
         log.info("[Redis] device heartbeat updated = {}", deviceStateRequest.deviceId());
     }
 }

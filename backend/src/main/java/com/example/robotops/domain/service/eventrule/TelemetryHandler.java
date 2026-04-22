@@ -58,6 +58,8 @@ public enum TelemetryHandler implements EventHandler {
     ),
 
 
+
+
     IDLE(
             tp -> StringEnum.from(Mission.class, tp.state().mission()) == Mission.IDLE,
             EventType.IDLE,
@@ -105,6 +107,10 @@ public enum TelemetryHandler implements EventHandler {
     */
 
     // todo: 하 뭔가 이상함 내생각대로안나올듯
+    // todo : 일단 이벤트먼저
+    // todo : 그다음 save , ws
+    // todo : 카프카 이상하게쓰고있는것같음 구조분리하고 테스트
+    // 에러코드
 
     @Override
     public List<DeviceEvent> evaluate(TelemetryPayload telemetryPayload) {
