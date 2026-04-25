@@ -32,9 +32,14 @@ public class TelemetryService {
 
         mqttParser.parse(topic, message).ifPresent(
                 telemetryPayload -> {
+
                     kafkaProducer.sendDashBoard(telemetryPayload);
-                    kafkaProducer.sendTelemetry(TelemetryRawRequest.of(TopicInfo.of(topic), telemetryPayload, message.getPayload()));
+                    kafkaProducer.setRedis(telemetryPayload);
+                    kafkaProducer.sendTelemetry(
+                            TelemetryRawRequest.of(TopicInfo.of(topic), telemetryPayload, message.getPayload()));
+                    kafkaProducer.detectDeviceEvent(telemetryPayload);
                     kafkaProducer.sendDeviceState(DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload));
+
                 }
         );
 

@@ -15,6 +15,7 @@ public class DeviceEventService {
     private final DeviceEventRepository deviceEventRepository;
     private final WebsocketService websocketService;
 
+    // todo : 분리
     @Transactional
     public void emit(DeviceEvent deviceEvent) {
         deviceEventRepository.save(deviceEvent);
@@ -28,4 +29,5 @@ public class DeviceEventService {
         // 웹소캣으로 실시간 전달
         deviceEvents.forEach(websocketService::pushEvent);
     }
+
 }

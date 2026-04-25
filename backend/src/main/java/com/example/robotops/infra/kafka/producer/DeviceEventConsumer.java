@@ -3,9 +3,12 @@ package com.example.robotops.infra.kafka.producer;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
 import com.example.robotops.domain.entity.DeviceEvent;
-import com.example.robotops.domain.service.DeviceEventService;
-import com.example.robotops.domain.service.eventrule.TelemetryHandler;
+import com.example.robotops.domain.service.eventrule.EventContext;
+import com.example.robotops.domain.service.eventrule.EventEngine;
+import com.example.robotops.domain.service.eventrule.RedisSnapshotBuilder;
+import com.example.robotops.infra.kafka.consumer.KafkaProducer;
 import com.example.robotops.infra.redis.JsonUtil;
+import com.example.robotops.infra.redis.RedisSyncService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,17 +20,21 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class DeviceEventConsumer {
 
-    private final DeviceEventService eventService;
+    private final KafkaProducer kafkaProducer;
+    private final RedisSnapshotBuilder redisSnapshotBuilder;
+    private final EventEngine eventEngine;
     private final JsonUtil jsonUtil;
+    private final RedisSyncService redisSyncService;
 
-
-    @KafkaListener(topics = "robot.device.state", groupId = "db-group")
+    @KafkaListener(topics = "robot.device.event", groupId = "detect")
     public void consume(String message) {
 
-        // todo 쪼개기
         TelemetryPayload telemetryPayload = jsonUtil.fromJson(message, TelemetryPayload.class);
-        List<DeviceEvent> deviceEvents = TelemetryHandler.evaluateAll(telemetryPayload);
-        eventService.emitAll(deviceEvents);
+        EventContext eventContext = new EventContext(telemetryPayload, redisSnapshotBuilder.build(telemetryPayload));
+        List<DeviceEvent> deviceEventList =
+                eventEngine.process(eventContext);
 
+        deviceEventList.forEach( deviceEvent -> redisSyncService.countSync(eventContext, deviceEvent));
+        deviceEventList.forEach(kafkaProducer::sendDeviceEvent);
     }
 }

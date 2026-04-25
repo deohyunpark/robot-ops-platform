@@ -41,7 +41,7 @@ public class RedisService {
 
     public void updateMetric(String deviceId, String metric, Object value) {
 
-        String key = RedisKey.metric(metric).key(deviceId);
+        String key = RedisKey.METRIC.key(deviceId, metric);
 
         stringRedisTemplate.opsForValue()
                 .set(key, String.valueOf(value));
@@ -86,12 +86,13 @@ public class RedisService {
 
     }
 
-    public void updateTrend(String deviceId, String metric, int value) {
+    public void updateCount(String deviceId, String metric, int value) {
 
         String key = RedisKey.TREND.key(deviceId, metric);
 
         stringRedisTemplate.opsForValue().set(key, String.valueOf(value));
 
     }
+
 
 }

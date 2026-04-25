@@ -54,6 +54,7 @@ public class OfflineDetectorScheduler {
             Map.of("lastSeen", lastSeen,
                     "now", System.currentTimeMillis());
             // 2. 이벤트 생성
+            // todo : 분리
             deviceEventService.emit(
                     DeviceEvent.of(
                             deviceId,

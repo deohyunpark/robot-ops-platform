@@ -1,6 +1,5 @@
 package com.example.robotops.domain.repository;
 
-import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.namedparam.BeanPropertySqlParameterSource;

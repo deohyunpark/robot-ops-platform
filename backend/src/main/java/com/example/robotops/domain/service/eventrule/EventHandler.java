@@ -1,13 +1,42 @@
 package com.example.robotops.domain.service.eventrule;
 
-import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
+import com.example.robotops.domain.deviceStateType.EventType;
+import com.example.robotops.domain.deviceStateType.Severity;
 import com.example.robotops.domain.entity.DeviceEvent;
-import java.util.List;
-import org.springframework.stereotype.Component;
+import com.example.robotops.domain.response.eventpayload.PayloadType;
+import java.util.Optional;
+import java.util.function.Function;
 
-@Component
-public interface EventHandler {
+public class EventHandler {
 
-    List<DeviceEvent> evaluate(TelemetryPayload telemetryPayloads);
+    private final Function<EventContext, Boolean> rule;
+    private final EventType eventType;
+    private final Severity severity;
+    private final PayloadType payloadType;
 
+    public EventHandler(
+            Function<EventContext, Boolean> rule,
+            EventType eventType,
+            Severity severity,
+            PayloadType payloadType
+    ) {
+        this.rule = rule;
+        this.eventType = eventType;
+        this.severity = severity;
+        this.payloadType = payloadType;
+    }
+
+    public Optional<DeviceEvent> evaluate(EventContext ctx) {
+        if (rule.apply(ctx)) {
+            return Optional.of(
+                    DeviceEvent.of(
+                            ctx.tp().robotId(),
+                            eventType,
+                            severity,
+                            payloadType.toMap(ctx.tp())
+                    )
+            );
+        }
+        return Optional.empty();
+    }
 }
