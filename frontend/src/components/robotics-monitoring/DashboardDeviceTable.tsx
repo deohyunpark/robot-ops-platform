@@ -1,9 +1,11 @@
 import { useCallback } from "react"
-import type { Device, DeviceStatus } from "./roboticsMonitoringDashboardTypes"
+import type { Device } from "./roboticsMonitoringDashboardTypes"
 import type { RoboticsDashboardFont } from "./roboticsMonitoringDashboardTypes"
 import { Badge } from "./DashboardParts"
 import {
   coerceFontSize,
+  formatBattery,
+  formatKoreanRelativeTime,
   formatTemp,
   withAlpha,
 } from "./roboticsMonitoringUtils"
@@ -19,7 +21,6 @@ export function useDeviceTableRenderer(args: {
   textPrimary: string
   textSecondary: string
   accent: string
-  statusColor: (s: DeviceStatus) => string
   statusError: string
   statusWarning: string
   lowBatteryThreshold: number
@@ -39,13 +40,13 @@ export function useDeviceTableRenderer(args: {
     onSelect,
     panelBackground,
     selectedId,
-    statusColor,
     statusError,
     statusWarning,
     textPrimary,
     textSecondary,
     ui,
   } = args
+  const tableColumns = "repeat(6, minmax(0, 1fr))"
 
   return useCallback(
     (rows: Device[]) => {
@@ -65,8 +66,7 @@ export function useDeviceTableRenderer(args: {
             role="row"
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "1.3fr 0.9fr 0.7fr 0.6fr 0.6fr 0.9fr",
+              gridTemplateColumns: tableColumns,
               gap: 12,
               padding: "12px 14px",
               background: panelBackground,
@@ -77,20 +77,21 @@ export function useDeviceTableRenderer(args: {
               lineHeight: monoFont?.lineHeight ?? "1.2em",
               letterSpacing: monoFont?.letterSpacing ?? "-0.01em",
               userSelect: "none",
+              textAlign: "center",
             }}
           >
             <span role="columnheader">{ui.device}</span>
             <span role="columnheader">{ui.status}</span>
-            <span role="columnheader" style={{ textAlign: "right" }}>
+            <span role="columnheader">
               {ui.battery}
             </span>
-            <span role="columnheader" style={{ textAlign: "right" }}>
+            <span role="columnheader">
               {ui.temp}
             </span>
-            <span role="columnheader" style={{ textAlign: "right" }}>
-              {ui.errors}
+            <span role="columnheader">
+              이벤트
             </span>
-            <span role="columnheader" style={{ textAlign: "right" }}>
+            <span role="columnheader">
               {ui.lastSeen}
             </span>
           </div>
@@ -110,10 +111,21 @@ export function useDeviceTableRenderer(args: {
             ) : (
               rows.map((d) => {
                 const isSelected = d.id === selectedId
-                const c = statusColor(d.status)
+                const statusText = d.mission?.trim() || "-"
+                const missionColor = getMissionColor(statusText, accent)
+                const eventText = d.lastEventType?.trim() || "-"
+                const severity = (d.lastEventSeverity ?? "").toUpperCase()
+                const eventColor =
+                  severity === "CRITICAL"
+                    ? "#FF4D6D"
+                    : severity === "WARNING"
+                      ? "#FFB020"
+                      : severity === "INFO"
+                        ? "#60A5FA"
+                        : textSecondary
                 const batteryBad = d.battery <= lowBatteryThreshold
                 const tempBad = d.temperature >= abnormalTempThreshold
-                const errBad = d.errorRate >= 2.5
+                const eventBad = eventText !== "-"
                 const emergencyBad = d.emergency
 
                 const rowBg = isSelected
@@ -131,8 +143,7 @@ export function useDeviceTableRenderer(args: {
                     style={{
                       width: "100%",
                       display: "grid",
-                      gridTemplateColumns:
-                        "1.3fr 0.9fr 0.7fr 0.6fr 0.6fr 0.9fr",
+                      gridTemplateColumns: tableColumns,
                       gap: 12,
                       padding: "12px 14px",
                       border: "none",
@@ -158,6 +169,7 @@ export function useDeviceTableRenderer(args: {
                         flexDirection: "column",
                         gap: 4,
                         minWidth: 0,
+                        alignItems: "center",
                       }}
                     >
                       <span
@@ -169,9 +181,10 @@ export function useDeviceTableRenderer(args: {
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
+                          textAlign: "center",
                         }}
                       >
-                        {d.name}
+                        {d.id}
                       </span>
                       <span
                         style={{
@@ -183,9 +196,10 @@ export function useDeviceTableRenderer(args: {
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
+                          textAlign: "center",
                         }}
                       >
-                        {d.id} • {d.model}
+                        {d.mode ?? d.name}
                       </span>
                     </span>
 
@@ -194,6 +208,7 @@ export function useDeviceTableRenderer(args: {
                       style={{
                         display: "flex",
                         alignItems: "center",
+                        justifyContent: "center",
                       }}
                     >
                       <span
@@ -203,9 +218,9 @@ export function useDeviceTableRenderer(args: {
                           gap: 8,
                           padding: "6px 10px",
                           borderRadius: 999,
-                          background: withAlpha(c, 0.12),
-                          color: c,
-                          border: `1px solid ${withAlpha(c, 0.25)}`,
+                          background: withAlpha(missionColor, 0.12),
+                          color: missionColor,
+                          border: `1px solid ${withAlpha(missionColor, 0.25)}`,
                           ...monoFont,
                           fontSize: coerceFontSize(monoFont?.fontSize, 12),
                           lineHeight: monoFont?.lineHeight ?? "1em",
@@ -219,21 +234,21 @@ export function useDeviceTableRenderer(args: {
                             width: 8,
                             height: 8,
                             borderRadius: 999,
-                            background: c,
-                            boxShadow: `0 0 0 3px ${withAlpha(c, 0.12)}`,
+                            background: missionColor,
+                            boxShadow: `0 0 0 3px ${withAlpha(missionColor, 0.12)}`,
                           }}
                         />
-                        {d.status}
+                        {statusText}
                       </span>
                     </span>
 
                     <span
                       role="cell"
                       style={{
-                        textAlign: "right",
+                        textAlign: "center",
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "flex-end",
+                        justifyContent: "center",
                         gap: 10,
                       }}
                     >
@@ -244,7 +259,7 @@ export function useDeviceTableRenderer(args: {
                           color: batteryBad ? statusWarning : textSecondary,
                         }}
                       >
-                        {Math.round(d.battery)}%
+                        {formatBattery(d.battery)}%
                       </span>
                       <span
                         aria-hidden="true"
@@ -271,10 +286,10 @@ export function useDeviceTableRenderer(args: {
                     <span
                       role="cell"
                       style={{
-                        textAlign: "right",
+                        textAlign: "center",
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "flex-end",
+                        justifyContent: "center",
                         gap: 8,
                       }}
                     >
@@ -300,10 +315,10 @@ export function useDeviceTableRenderer(args: {
                     <span
                       role="cell"
                       style={{
-                        textAlign: "right",
+                        textAlign: "center",
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "flex-end",
+                        justifyContent: "center",
                         gap: 8,
                       }}
                     >
@@ -311,21 +326,15 @@ export function useDeviceTableRenderer(args: {
                         style={{
                           ...monoFont,
                           fontSize: coerceFontSize(monoFont?.fontSize, 12),
-                          color: errBad ? statusError : textSecondary,
+                          color: eventBad ? eventColor : textSecondary,
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {d.errorRate.toFixed(1)}%
+                        {eventText}
                       </span>
                       {emergencyBad ? (
                         <Badge
                           label="EMERGENCY"
-                          color={statusError}
-                          font={monoFont}
-                        />
-                      ) : errBad ? (
-                        <Badge
-                          label="Spike"
                           color={statusError}
                           font={monoFont}
                         />
@@ -335,19 +344,17 @@ export function useDeviceTableRenderer(args: {
                     <span
                       role="cell"
                       style={{
-                        textAlign: "right",
+                        textAlign: "center",
                         ...monoFont,
                         fontSize: coerceFontSize(monoFont?.fontSize, 12),
                         color: textSecondary,
                         whiteSpace: "nowrap",
                         display: "flex",
-                        justifyContent: "flex-end",
+                        justifyContent: "center",
                         alignItems: "center",
                       }}
                     >
-                      {d.status === "Offline"
-                        ? `${Math.round(d.lastSeenMinutes)}m`
-                        : ui.now}
+                      {formatKoreanRelativeTime(d.updatedAt ?? d.lastSeenAt)}
                     </span>
 
                     <span
@@ -385,7 +392,6 @@ export function useDeviceTableRenderer(args: {
       onSelect,
       panelBackground,
       selectedId,
-      statusColor,
       statusError,
       statusWarning,
       textPrimary,
@@ -393,4 +399,16 @@ export function useDeviceTableRenderer(args: {
       ui,
     ]
   )
+}
+
+function getMissionColor(mission: string, fallback: string): string {
+  const text = mission.trim().toUpperCase()
+  if (!text || text === "-") return fallback
+  if (text === "IDLE") return "#A39F74"
+  if (text === "PICK") return "#8B5CF6"
+  if (text === "PACK") return "#F59E0B"
+  if (text === "MOVE") return "#3B82F6"
+  if (text === "CHARGE") return "#22C55E"
+  if (text === "UNKNOWN") return "#EF4444"
+  return fallback
 }

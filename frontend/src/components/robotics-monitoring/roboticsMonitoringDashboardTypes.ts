@@ -18,6 +18,24 @@ export type Device = {
   lastSeenMinutes: number
   emergency: boolean
   errorRate: number
+  mode?: string
+  mission?: string
+  lastEventType?: string
+  lastEventSeverity?: string
+  speedMps?: number
+  posX?: number
+  posY?: number
+  theta?: number
+  mapId?: string
+  cpuPct?: number
+  memPct?: number
+  estop?: boolean
+  bumper?: boolean
+  obstacle?: boolean
+  errorCode?: string
+  lastSeq?: number
+  lastSeenAt?: string
+  updatedAt?: string
 }
 
 export type RoboticsDashboardFont = CSSProperties

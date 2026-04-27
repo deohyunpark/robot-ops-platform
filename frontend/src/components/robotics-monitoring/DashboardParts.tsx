@@ -16,6 +16,7 @@ export function KPI(props: {
   textSecondary: string
   titleFont: RoboticsDashboardFont
   valueFont: RoboticsDashboardFont
+  onClick?: () => void
 }) {
   const {
     title,
@@ -28,9 +29,23 @@ export function KPI(props: {
     textSecondary,
     titleFont,
     valueFont,
+    onClick,
   } = props
   return (
     <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onClick()
+              }
+            }
+          : undefined
+      }
       style={{
         position: "relative",
         width: "100%",
@@ -41,6 +56,7 @@ export function KPI(props: {
         boxSizing: "border-box",
         overflow: "hidden",
         minHeight: 86,
+        cursor: onClick ? "pointer" : "default",
       }}
     >
       <div

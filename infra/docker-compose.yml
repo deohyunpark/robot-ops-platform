@@ -24,6 +24,14 @@ services:
       - "6379:6379"
     restart: always
 
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+
   kafka:
     image: apache/kafka:3.7.0
     container_name: kafka
