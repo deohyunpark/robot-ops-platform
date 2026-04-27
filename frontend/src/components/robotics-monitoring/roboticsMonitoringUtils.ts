@@ -52,3 +52,47 @@ export function formatTemp(t: number) {
   const v = Math.round(t * 10) / 10
   return `${v.toFixed(1)}°C`
 }
+
+export function formatBattery(v: number) {
+  if (!Number.isFinite(v)) return "0"
+  const rounded = Math.round(v * 100) / 100
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)
+}
+
+export function formatKoreanDateTime(iso?: string) {
+  if (!iso) return "-"
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return "-"
+  return new Date(t).toLocaleString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+}
+
+export function formatKoreanRelativeTime(iso?: string) {
+  if (!iso) return "-"
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return "-"
+
+  const diffMs = Date.now() - t
+  if (diffMs < 0) return "방금 전"
+
+  const sec = Math.floor(diffMs / 1000)
+  if (sec < 5) return "방금 전"
+  if (sec < 60) return `${sec}초 전`
+
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}분 전`
+
+  const hour = Math.floor(min / 60)
+  if (hour < 24) return `${hour}시간 전`
+
+  const day = Math.floor(hour / 24)
+  return `${day}일 전`
+}
