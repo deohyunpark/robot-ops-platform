@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class EventHandlerRegistry {
 
+    // todo : 이벤트 분리 후, 중복방지 필요 + 해결테이블
     @Bean
     public EventHandler offlineHandler(RealtimeRule realtimeRule) {
         return new EventHandler(

@@ -1,7 +1,10 @@
 package com.example.robotops.infra.redis;
 
+import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.request.DeviceStateRequest;
+import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -30,14 +33,21 @@ public class RedisService {
                 .add(RedisKey.DEVICE_LAST_SEEN_ZSET.key(), deviceId, now);
     }
 
-    public Long getHeartbeat(String deviceId) {
-
-        Double score = stringRedisTemplate.opsForZSet()
-                .score(RedisKey.DEVICE_LAST_SEEN_ZSET.key(), deviceId);
-
-        return score != null ? score.longValue() : null;
+    public Set<String> getOfflineDeviceList(long threshold) {
+        String key = RedisKey.DEVICE_LAST_SEEN_ZSET.key();
+        return stringRedisTemplate.opsForZSet()
+                .rangeByScore(key, 0, threshold);
     }
 
+    public Double getHeartbeat(String deviceId) {
+        String key = RedisKey.DEVICE_LAST_SEEN_ZSET.key();
+        return stringRedisTemplate.opsForZSet().score(key, deviceId);
+    }
+
+    public void deleteOfflineDevice(String deviceId) {
+        String key = RedisKey.DEVICE_LAST_SEEN_ZSET.key();
+        stringRedisTemplate.opsForZSet().remove(key, deviceId);
+    }
 
     public void updateMetric(String deviceId, String metric, Object value) {
 
@@ -94,5 +104,22 @@ public class RedisService {
 
     }
 
+    // duration 수정
+    public void updateEvent(DeviceEvent deviceEvent) {
+        String key = RedisKey.DEVICE_EVENT.key(deviceEvent.getDeviceId(), deviceEvent.getEventType().name());
 
+        stringRedisTemplate.opsForValue().setIfAbsent(key, "1", Duration.ofMinutes(5));
+    }
+
+    public boolean tryAcquire(DeviceEvent event) {
+        String key = RedisKey.DEVICE_EVENT.key(
+                event.getDeviceId(),
+                event.getEventType().name()
+        );
+
+        Boolean success = stringRedisTemplate.opsForValue()
+                .setIfAbsent(key, "1", Duration.ofMinutes(5));
+
+        return Boolean.TRUE.equals(success);
+    }
 }

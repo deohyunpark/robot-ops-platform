@@ -56,11 +56,12 @@ public class KafkaProducer {
         );
     }
 
-    public void sendDeviceEvent(DeviceEvent deviceEvent) {
+    public boolean sendDeviceEvent(DeviceEvent deviceEvent) {
         template.send(
                 "robot.device.event.detected",
                 deviceEvent.getDeviceId(),
                 jsonUtil.toJson(deviceEvent)
         );
+        return true;
     }
 }

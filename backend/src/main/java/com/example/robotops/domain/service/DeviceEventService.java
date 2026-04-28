@@ -2,32 +2,36 @@ package com.example.robotops.domain.service;
 
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.repository.DeviceEventRepository;
-import com.example.robotops.infra.websocket.WebsocketService;
+import com.example.robotops.domain.response.DeviceEventResponse;
+import com.example.robotops.infra.redis.RedisService;
 import jakarta.transaction.Transactional;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeviceEventService {
 
     private final DeviceEventRepository deviceEventRepository;
-    private final WebsocketService websocketService;
+    private final ApplicationEventPublisher applicationEventPublisher;
+    private final RedisService redisService;
 
-    // todo : 분리
     @Transactional
-    public void emit(DeviceEvent deviceEvent) {
+    public void process(DeviceEvent deviceEvent) {
+
+        if (!redisService.tryAcquire(deviceEvent)) {
+            return;
+        }
+
         deviceEventRepository.save(deviceEvent);
-        // 웹소캣으로 실시간 전달
-        websocketService.pushEvent(deviceEvent);
-    }
+        log.info("[DB] Device event insert = {}", deviceEvent.getDeviceId());
 
-    @Transactional
-    public void emitAll(List<DeviceEvent> deviceEvents) {
-        deviceEventRepository.batchInsert(deviceEvents);
-        // 웹소캣으로 실시간 전달
-        deviceEvents.forEach(websocketService::pushEvent);
+        applicationEventPublisher.publishEvent(
+                DeviceEventResponse.of(deviceEvent)
+        );
     }
 
 }

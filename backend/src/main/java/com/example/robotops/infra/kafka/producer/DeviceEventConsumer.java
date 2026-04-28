@@ -28,13 +28,20 @@ public class DeviceEventConsumer {
 
     @KafkaListener(topics = "robot.device.event", groupId = "detect")
     public void consume(String message) {
-
+        // 1. mqtt -> payload 변환
         TelemetryPayload telemetryPayload = jsonUtil.fromJson(message, TelemetryPayload.class);
+
+        // 2. 이벤트 생성시 필요한 context 생성
         EventContext eventContext = new EventContext(telemetryPayload, redisSnapshotBuilder.build(telemetryPayload));
+
+        // 3. rule check 후 event 생성
         List<DeviceEvent> deviceEventList =
                 eventEngine.process(eventContext);
 
-        deviceEventList.forEach( deviceEvent -> redisSyncService.countSync(eventContext, deviceEvent));
-        deviceEventList.forEach(kafkaProducer::sendDeviceEvent);
+        // 4. event 생성 후 레디스 갱신 + act kafka
+        for (DeviceEvent event : deviceEventList) {
+            redisSyncService.countSync(eventContext, event);
+            kafkaProducer.sendDeviceEvent(event);
+        }
     }
 }
