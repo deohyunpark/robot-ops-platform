@@ -3,7 +3,14 @@ package com.example.robotops.infra.redis;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -121,5 +128,99 @@ public class RedisService {
                 .setIfAbsent(key, "1", Duration.ofMinutes(5));
 
         return Boolean.TRUE.equals(success);
+    }
+
+    public void countDone15Minutes() {
+        String bucketKey = current15MinBucketKey();
+
+        stringRedisTemplate.opsForValue().increment(bucketKey);
+
+        stringRedisTemplate.expire(bucketKey, Duration.ofDays(2));
+
+    }
+
+    public void countDoneDaily() {
+        String dailyKey = currentDailyKey();
+
+        stringRedisTemplate.opsForValue().increment(dailyKey);
+
+        stringRedisTemplate.expire(dailyKey, Duration.ofDays(2));
+    }
+
+    public List<String> getMultiValue(List<String> keys) {
+        return stringRedisTemplate.opsForValue().multiGet(keys);
+    }
+
+
+    public Map<String, String> bucketLabel() {
+
+        ZonedDateTime start = currentBucketStart().atZone(ZoneId.of("Asia/Seoul"));
+        ZonedDateTime end = start.plusMinutes(14);
+
+        return Map.of(
+                "start", start.toInstant().toString(),
+                "end", end.toInstant().toString()
+        );
+    }
+
+    public String bucketKey(LocalDateTime time) {
+
+        return "throughput:" +
+                time.format(
+                        DateTimeFormatter.ofPattern("yyyy-MM-dd:HH:mm")
+                );
+    }
+
+    public Map<String, Long> getThroughput() {
+        Map<String, Long> throughput = new HashMap<>();
+
+        throughput.put("current", getLong(current15MinBucketKey()));
+        throughput.put("prev", getLong(prev15mKey()));
+        throughput.put("today", getLong(currentDailyKey()));
+
+        return throughput;
+    }
+
+    private long getLong(String key) {
+
+        String value =
+                stringRedisTemplate.opsForValue().get(key);
+
+        return value == null ? 0 : Long.parseLong(value);
+    }
+
+    private String prev15mKey() {
+
+        LocalDateTime current = currentBucketStart();
+
+        LocalDateTime prev = current.minusMinutes(15);
+
+        return bucketKey(prev);
+    }
+
+    public String currentDailyKey() {
+        LocalDate today = LocalDate.now();
+
+        return "throughput:daily:" +
+                today.format(DateTimeFormatter.ISO_DATE);
+    }
+
+
+    public String current15MinBucketKey() {
+        return "throughput:" +
+                currentBucketStart().format(
+                        DateTimeFormatter.ofPattern("yyyy-MM-dd:HH:mm"));
+    }
+
+
+    public LocalDateTime currentBucketStart() {
+
+        LocalDateTime now = LocalDateTime.now();
+
+        int minute = (now.getMinute() / 15) * 15;
+
+        return now.withMinute(minute)
+                .withSecond(0)
+                .withNano(0);
     }
 }

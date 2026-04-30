@@ -51,6 +51,8 @@ public class DeviceEvent {
     @CreationTimestamp
     private OffsetDateTime createdAt;
 
+    // todo : resolved 추가
+    // todo : 크리티컬 -> action, warning -> 보고 분석, info -> mode 변경
     public static DeviceEvent of(String deviceId, EventType eventType, Severity severity, Map<String, Object> payload) {
         return DeviceEvent.builder()
                 .deviceId(deviceId)

@@ -64,4 +64,25 @@ public class KafkaProducer {
         );
         return true;
     }
+    public void detectMission(TelemetryPayload telemetryPayload) {
+        template.send(
+                "robot.device.mission",
+                telemetryPayload.robotId(),
+                jsonUtil.toJson(telemetryPayload)
+        );
+    }
+
+    public void countDone(String deviceId) {
+        template.send(
+                "robot.device.mission.done",
+                deviceId
+        );
+    }
+
+    public void sendThroughput(String deviceId) {
+        template.send(
+                "robot.device.throughput",
+                deviceId
+        );
+    }
 }

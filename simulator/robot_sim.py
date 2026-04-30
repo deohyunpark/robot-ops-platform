@@ -21,7 +21,7 @@ def make_payload(robot_id, seq, x, y, theta, battery, temp, obstacle, error_code
         "state": {
             "online": True,
             "mode": "AUTO",
-            "mission": random.choice(["IDLE", "PICK", "PACK", "MOVE", "CHARGE"]),
+            "mission": random.choice(["IDLE", "PICK", "PACK", "MOVE", "CHARGE", "DONE"]),
             "batteryPct": round(battery, 2),
             "speedMps": round(random.uniform(0.0, 1.8), 2)
         },

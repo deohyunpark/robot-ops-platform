@@ -65,7 +65,7 @@ public class EventHandlerRegistry {
         return new EventHandler(
                 realtimeRule::lowBattery,
                 EventType.LOW_BATTERY,
-                Severity.WARNING,
+                Severity.CRITICAL,
                 PayloadType.LOW_BATTERY
         );
     }
@@ -95,7 +95,7 @@ public class EventHandlerRegistry {
         return new EventHandler(
                 statefulRule::isTrendingUp,
                 EventType.SPEED_RISING,
-                Severity.INFO,
+                Severity.WARNING,
                 PayloadType.CHARGING
         );
     }
@@ -105,7 +105,7 @@ public class EventHandlerRegistry {
         return new EventHandler(
                 cxt -> statefulRule.isHighOverTime(cxt, "cpu"),
                 EventType.CPU_RISING,
-                Severity.INFO,
+                Severity.WARNING,
                 PayloadType.CHARGING
         );
     }
@@ -115,7 +115,7 @@ public class EventHandlerRegistry {
         return new EventHandler(
                 cxt -> statefulRule.isHighOverTime(cxt, "temp"),
                 EventType.TEMP_RISING,
-                Severity.INFO,
+                Severity.WARNING,
                 PayloadType.CHARGING
         );
     }

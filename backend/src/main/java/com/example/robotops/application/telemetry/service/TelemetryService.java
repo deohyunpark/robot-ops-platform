@@ -39,7 +39,7 @@ public class TelemetryService {
                             TelemetryRawRequest.of(TopicInfo.of(topic), telemetryPayload, message.getPayload()));
                     kafkaProducer.detectDeviceEvent(telemetryPayload);
                     kafkaProducer.sendDeviceState(DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload));
-
+                    kafkaProducer.detectMission(telemetryPayload);
                 }
         );
 

@@ -8,5 +8,6 @@ public enum Mission implements StringEnum {
     PACK,
     MOVE,
     CHARGE,
+    DONE,
     UNKNOWN
 }
