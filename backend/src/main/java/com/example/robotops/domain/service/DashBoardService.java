@@ -1,10 +1,11 @@
 package com.example.robotops.domain.service;
 
+import com.example.robotops.domain.repository.DeviceStateRepository;
 import com.example.robotops.domain.response.ThroughputPoint;
 import com.example.robotops.domain.response.ThroughputResponse;
+import com.example.robotops.domain.response.UtilizationResponse;
 import com.example.robotops.infra.redis.RedisService;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 public class DashBoardService {
 
     private final RedisService redisService;
+    private final DeviceStateRepository deviceStateRepository;
 
     public ThroughputResponse getThroughput() {
 
@@ -25,7 +27,7 @@ public class DashBoardService {
         long today = throughput.get("today");
 
         Map<String, String> label = redisService.bucketLabel();
-
+        System.out.printf("label: %s\n", label.get("start"));
         double rate = prev == 0 ? 0 :
                 ((double)(current - prev) / prev) * 100;
 
@@ -42,13 +44,13 @@ public class DashBoardService {
     private List<ThroughputPoint> getRecent12Buckets() {
 
         List<String> keys = new ArrayList<>();
-        List<LocalDateTime> buckets = new ArrayList<>();
+        List<OffsetDateTime> buckets = new ArrayList<>();
 
-        LocalDateTime current = redisService.currentBucketStart();
+        OffsetDateTime current = redisService.currentBucketStart();
 
         for (int i = 11; i >= 0; i--) {
 
-            LocalDateTime bucket = current.minusMinutes(i * 15);
+            OffsetDateTime bucket = current.minusMinutes(i * 15);
 
             buckets.add(bucket);
             keys.add(redisService.bucketKey(bucket));
@@ -68,14 +70,27 @@ public class DashBoardService {
 
             result.add(
                     new ThroughputPoint(
-                            buckets.get(j).format(
-                                    DateTimeFormatter.ofPattern("HH:mm")
-                            ),
+                            buckets.get(j).toString(),
                             count
                     )
             );
         }
 
         return result;
+    }
+
+    public List<UtilizationResponse> getUtilization() {
+
+        List<String> deviceIdList = deviceStateRepository.findAllDeviceId();
+
+        // Todo: time match check
+        long currentBucketStart = redisService.currentBucketStart().toInstant().toEpochMilli();
+
+        return deviceIdList.stream().map(
+                deviceId ->
+                        UtilizationResponse.from(deviceId,
+                                currentBucketStart,
+                                redisService.getUtilizationValue(deviceId))
+        ).toList();
     }
 }

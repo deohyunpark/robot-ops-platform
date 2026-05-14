@@ -26,7 +26,7 @@ public class OfflineDetectorScheduler {
      * todo : 테스트 후 시뮬레이터를 수정(타임아웃 길게 유지)
     */
 
-    @Scheduled(fixedDelay = 2000) // 2초마다 체크
+    @Scheduled(fixedRate = 2000) // 2초마다 체크
     public void detectOffline() {
 
         long now = System.currentTimeMillis();

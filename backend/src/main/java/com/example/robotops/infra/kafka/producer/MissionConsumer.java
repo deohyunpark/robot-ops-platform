@@ -26,8 +26,15 @@ public class MissionConsumer {
 
     }
 
+    @KafkaListener(topics = "robot.device.mission", groupId = "redis-bucket")
+    public void setMissionTimeAndBucketRedis(String message) {
+
+        TelemetryPayload telemetryPayload = jsonUtil.fromJson(message, TelemetryPayload.class);
+        missionService.processDuration(telemetryPayload);
+    }
+
     @KafkaListener(topics = "robot.device.mission.done", groupId = "redis")
-    public void setRedis(String deviceId) {
+    public void setCountRedis(String deviceId) {
         redisService.countDone15Minutes();
         redisService.countDoneDaily();
     }

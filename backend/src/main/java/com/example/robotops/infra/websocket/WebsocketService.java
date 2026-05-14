@@ -35,7 +35,7 @@ public class WebsocketService {
 
     public void broadcastThroughput(ThroughputResponse throughputResponse) {
         messagingTemplate.convertAndSend( "/robot/device/throughput",
-                jsonUtil.toJson(throughputResponse));
+                throughputResponse);
     }
 
 

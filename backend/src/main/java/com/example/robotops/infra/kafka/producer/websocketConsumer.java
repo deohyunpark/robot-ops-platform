@@ -1,7 +1,6 @@
 package com.example.robotops.infra.kafka.producer;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
-import com.example.robotops.domain.response.ThroughputResponse;
 import com.example.robotops.domain.service.DashBoardService;
 import com.example.robotops.infra.redis.JsonUtil;
 import com.example.robotops.infra.websocket.WebsocketService;
@@ -26,7 +25,6 @@ public class websocketConsumer {
 
     @KafkaListener(topics = "robot.device.throughput", groupId = "all")
     public void throughput(String deviceId) {
-        ThroughputResponse throughput = dashBoardService.getThroughput();
-        websocketService.broadcastThroughput(throughput);
+        websocketService.broadcastThroughput(dashBoardService.getThroughput());
     }
 }

@@ -5,5 +5,5 @@ import com.example.robotops.domain.entity.DeviceStateId;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 
-public interface DeviceStateRepository extends JpaRepository<DeviceState, DeviceStateId> {
+public interface DeviceStateRepository extends JpaRepository<DeviceState, DeviceStateId>, DeviceStateRepositoryCustom {
 }

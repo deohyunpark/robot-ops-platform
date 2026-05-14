@@ -43,7 +43,6 @@ public class MissionHistoryLog {
     @Column(name = "to_mission", length = 50)
     private Mission toMission;
 
-    @CreationTimestamp
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
@@ -55,12 +54,14 @@ public class MissionHistoryLog {
     @JoinColumn(name = "mission_current_id")
     private MissionCurrent missionCurrent;
 
-    public static MissionHistoryLog of(MissionCurrent missionCurrent, Mission fromMission, Mission toMission) {
+    public static MissionHistoryLog of(MissionCurrent missionCurrent, Mission fromMission, Mission toMission, OffsetDateTime oldStartTime) {
         return MissionHistoryLog.builder()
                 .deviceId(missionCurrent.getDeviceId())
                 .fromMission(fromMission)
                 .toMission(toMission)
                 .missionCurrent(missionCurrent)
+                .createdAt(oldStartTime)
+                .completedAt(missionCurrent.getUpdatedAt())
                 .build();
     }
 }

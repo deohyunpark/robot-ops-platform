@@ -13,4 +13,7 @@ public record TelemetryPayload(
         List<Errors> errors
 
 ) {
+    public boolean isActive(String mission) {
+        return !"IDLE".equals(mission) && !"CHARGE".equals(mission);
+    }
 }

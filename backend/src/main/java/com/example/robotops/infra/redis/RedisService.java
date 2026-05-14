@@ -4,9 +4,7 @@ import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import java.time.Duration;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
@@ -22,6 +20,17 @@ public class RedisService {
 
     private final StringRedisTemplate stringRedisTemplate;
     private final JsonUtil jsonUtil;
+
+    public  OffsetDateTime currentBucketStart() {
+
+        OffsetDateTime now = OffsetDateTime.now();
+
+        int minute = (now.getMinute() / 15) * 15;
+
+        return now.withMinute(minute)
+                .withSecond(0)
+                .withNano(0);
+    }
 
     // 디바이스 당 최신상태 저장
     public void saveState(DeviceStateRequest req) {
@@ -151,11 +160,10 @@ public class RedisService {
         return stringRedisTemplate.opsForValue().multiGet(keys);
     }
 
-
     public Map<String, String> bucketLabel() {
 
-        ZonedDateTime start = currentBucketStart().atZone(ZoneId.of("Asia/Seoul"));
-        ZonedDateTime end = start.plusMinutes(14);
+        OffsetDateTime start = currentBucketStart();
+        OffsetDateTime end = start.plusMinutes(14);
 
         return Map.of(
                 "start", start.toInstant().toString(),
@@ -163,7 +171,7 @@ public class RedisService {
         );
     }
 
-    public String bucketKey(LocalDateTime time) {
+    public String bucketKey(OffsetDateTime time) {
 
         return "throughput:" +
                 time.format(
@@ -191,9 +199,9 @@ public class RedisService {
 
     private String prev15mKey() {
 
-        LocalDateTime current = currentBucketStart();
+        OffsetDateTime current = currentBucketStart();
 
-        LocalDateTime prev = current.minusMinutes(15);
+        OffsetDateTime prev = current.minusMinutes(15);
 
         return bucketKey(prev);
     }
@@ -205,22 +213,50 @@ public class RedisService {
                 today.format(DateTimeFormatter.ISO_DATE);
     }
 
-
     public String current15MinBucketKey() {
         return "throughput:" +
                 currentBucketStart().format(
                         DateTimeFormatter.ofPattern("yyyy-MM-dd:HH:mm"));
     }
 
+    public String current15MinBucketKeyByDeviceId(String deviceId) {
+        return "utilization:" + deviceId + ":" +
+                currentBucketStart().toInstant().toEpochMilli();
+    }
 
-    public LocalDateTime currentBucketStart() {
+    public void updateMissionTime(String deviceId, String mission, String startedAt) {
+        String key = "utilization:" + deviceId;
 
-        LocalDateTime now = LocalDateTime.now();
+        stringRedisTemplate.opsForHash().put(key, "mission", mission);
+        stringRedisTemplate.opsForHash().put(key, "startedAt", startedAt);
+    }
 
-        int minute = (now.getMinute() / 15) * 15;
+    public String getMissionTimeValue(String deviceId, String hashKey) {
+        String key = "utilization:" + deviceId;
 
-        return now.withMinute(minute)
-                .withSecond(0)
-                .withNano(0);
+        return (String) stringRedisTemplate.opsForHash().get(key, hashKey);
+    }
+
+    public void updateUtilizationBucket(String deviceId, String hashKey, long duration) {
+        String key = current15MinBucketKeyByDeviceId(deviceId);
+
+        stringRedisTemplate.opsForHash().increment(key, hashKey, duration);
+    }
+
+    public Map<String, String> getUtilizationValue(String deviceId) {
+        String key = current15MinBucketKeyByDeviceId(deviceId);
+
+        Map<Object, Object> raw =
+                stringRedisTemplate.opsForHash().entries(key);
+
+        Map<String, String> result = new HashMap<>();
+
+        for (Map.Entry<Object, Object> entry : raw.entrySet()) {
+            result.put(
+                    String.valueOf(entry.getKey()),
+                    String.valueOf(entry.getValue())
+            );
+        }
+        return result;
     }
 }
