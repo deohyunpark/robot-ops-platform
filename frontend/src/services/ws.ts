@@ -1,7 +1,7 @@
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8080/ws"
 const WS_TOPICS = (
   import.meta.env.VITE_WS_TOPICS ??
-  `${import.meta.env.VITE_WS_TOPIC ?? "/robot/device/state"},/robot/device/event`
+  `${import.meta.env.VITE_WS_TOPIC ?? "/robot/device/state"},/robot/device/event,/robot/device/throughput`
 )
   .split(",")
   .map((x: string) => x.trim())
@@ -12,7 +12,6 @@ export function createSocket(onMessage: (data: unknown) => void) {
   const socket = new WebSocket(WS_URL, ["v12.stomp", "v11.stomp", "v10.stomp"])
 
   socket.onopen = () => {
-    console.log("WS connected:", WS_URL, "protocol:", socket.protocol || "(none)")
     socket.send(
       buildFrame("CONNECT", {
         "accept-version": STOMP_ACCEPT_VERSION,
@@ -32,7 +31,6 @@ export function createSocket(onMessage: (data: unknown) => void) {
         if (!frame) continue
 
         if (frame.command === "CONNECTED") {
-          console.log("STOMP connected:", frame.headers.version ?? "unknown")
           for (const [idx, topic] of WS_TOPICS.entries()) {
             socket.send(
               buildFrame("SUBSCRIBE", {
@@ -41,7 +39,6 @@ export function createSocket(onMessage: (data: unknown) => void) {
                 ack: "auto",
               })
             )
-            console.log("STOMP subscribed:", topic)
           }
           continue
         }
@@ -54,7 +51,8 @@ export function createSocket(onMessage: (data: unknown) => void) {
             // Sometimes body is JSON-stringified twice.
             if (typeof parsed === "string") {
               try {
-                onMessage(JSON.parse(parsed))
+                const nested = JSON.parse(parsed)
+                onMessage(nested)
               } catch {
                 onMessage(parsed)
               }
@@ -67,9 +65,7 @@ export function createSocket(onMessage: (data: unknown) => void) {
           continue
         }
 
-        if (frame.command === "ERROR") {
-          console.error("STOMP error frame:", frame.body || frame.headers.message)
-        }
+        if (frame.command === "ERROR") continue
       }
     }
 
@@ -82,13 +78,9 @@ export function createSocket(onMessage: (data: unknown) => void) {
     }
   }
 
-  socket.onclose = () => {
-    console.log("WS disconnected")
-  }
+  socket.onclose = () => {}
 
-  socket.onerror = (err) => {
-    console.error("WS error", err)
-  }
+  socket.onerror = () => {}
 
   return socket
 }

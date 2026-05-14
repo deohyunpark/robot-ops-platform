@@ -7,11 +7,14 @@ import {
   useState,
 } from "react"
 import { createSocket } from "../../services/ws"
+import {
+  fetchDashboardUtilization,
+  type DeviceUtilization,
+} from "../../services/dashboardUtilization"
 import { useDeviceTableRenderer } from "./DashboardDeviceTable"
 import {
   Badge,
   BatteryGauge,
-  FilterChip,
   KPI,
   MetricCard,
   Sparkline,
@@ -26,13 +29,18 @@ import {
   eventBatchFromPayload,
   resolveEventDeviceId,
   telemetryBatchToDevices,
+  throughputFromPayload,
 } from "./telemetryAdapter"
-import type { BackendDeviceEvent } from "./telemetryAdapter"
+import type { BackendDeviceEvent, BackendThroughputResponse } from "./telemetryAdapter"
 import { useElementInView } from "./useElementInView"
 import {
   clamp,
   coerceFontSize,
   formatBattery,
+  formatKoreanDateTime,
+  formatKoreanRelativeTime,
+  formatKoreanTime,
+  parseKoreanTimestampMs,
   formatTemp,
   withAlpha,
 } from "./roboticsMonitoringUtils"
@@ -80,9 +88,7 @@ export default function RoboticsMonitoringDashboard(
     headingFont,
     bodyFont,
     monoFont,
-    showSearch,
     showKPIs,
-    showFilters,
     showDetailPanel,
     style,
   } = props
@@ -94,6 +100,15 @@ export default function RoboticsMonitoringDashboard(
   const [modalOpen, setModalOpen] = useState(false)
   const [fleetModalOpen, setFleetModalOpen] = useState(false)
   const [onlineOfflineModalOpen, setOnlineOfflineModalOpen] = useState(false)
+  const [outageModalOpen, setOutageModalOpen] = useState(false)
+  const [throughputModalOpen, setThroughputModalOpen] = useState(false)
+  const [uptimeModalOpen, setUptimeModalOpen] = useState(false)
+  const [uptimeFilter, setUptimeFilter] = useState<
+    "all" | "normal" | "caution" | "warning"
+  >("all")
+  const [utilizationDevices, setUtilizationDevices] = useState<DeviceUtilization[]>([])
+  const [utilizationLoading, setUtilizationLoading] = useState(false)
+  const [utilizationError, setUtilizationError] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatInput, setChatInput] = useState("")
   const [rightTab, setRightTab] = useState<"fleetMap" | "insights" | "chat">("fleetMap")
@@ -122,17 +137,21 @@ export default function RoboticsMonitoringDashboard(
       },
     ]
   })
-  const [search, setSearch] = useState("")
+  const search = ""
   const [tick, setTick] = useState(0)
   const [liveDevices, setLiveDevices] = useState<Device[] | null>(null)
   const [deviceEvents, setDeviceEvents] = useState<Record<string, BackendDeviceEvent[]>>({})
+  const [throughputData, setThroughputData] = useState<BackendThroughputResponse | null>(null)
   const [wsConnected, setWsConnected] = useState(false)
+  const [lastWsMessageAt, setLastWsMessageAt] = useState<string>("")
   const socketRef = useRef<WebSocket | null>(null)
   const fleetHoverCloseTimerRef = useRef<number | null>(null)
   const deviceSource = useMemo(() => liveDevices ?? [], [liveDevices])
 
   useEffect(() => {
     const socket = createSocket((payload) => {
+      setLastWsMessageAt(new Date().toISOString())
+
       const mapped = telemetryBatchToDevices(payload)
       if (mapped.length) {
         startTransition(() =>
@@ -182,6 +201,11 @@ export default function RoboticsMonitoringDashboard(
           })
         )
       }
+
+      const throughput = throughputFromPayload(payload)
+      if (throughput) {
+        startTransition(() => setThroughputData(throughput))
+      }
     })
     socketRef.current = socket
 
@@ -230,16 +254,26 @@ export default function RoboticsMonitoringDashboard(
         : "No anomalies detected right now.",
       kpiTotal: ko ? "총 장비" : "Total Devices",
       kpiOnlineOffline: ko ? "온라인 / 오프라인" : "Online / Offline",
-      kpiAvgBattery: ko ? "평균 배터리" : "Avg Battery",
-      kpiAvgTemp: ko ? "평균 온도" : "Avg Temp",
-      kpiErrorRate: ko ? "에러율" : "Error Rate",
-      kpiEmergency: ko ? "긴급 알림" : "Emergency Alerts",
+      kpiAvgBattery: ko ? "고온 장비 수" : "Hot Devices",
+      kpiAvgTemp: ko ? "생산량" : "Production",
+      kpiErrorRate: ko ? "장애" : "Outage",
+      kpiEmergency: ko ? "가동률" : "Uptime",
+      uptimeTitle: ko ? "기기별 가동률" : "Device Uptime",
+      uptimeAll: ko ? "전체" : "All",
+      uptimeNormal: ko ? "정상" : "Normal",
+      uptimeCaution: ko ? "주의" : "Caution",
+      uptimeWarning: ko ? "경고" : "Warning",
+      uptimeEmpty: ko
+        ? "표시할 기기가 없습니다."
+        : "No devices to display.",
+      uptimeLoading: ko ? "가동률 데이터 불러오는 중…" : "Loading utilization…",
       hintAllUnits: ko ? "등록된 전체 장비" : "All registered units",
       hintRolling: ko ? "최근 15분" : "Rolling 15m",
       filtersLabel: ko ? "필터" : "Filters",
       filterOffline: ko ? "오프라인" : "Offline",
       filterLowBattery: ko ? "저전력" : "Low battery",
       filterHot: ko ? "고온" : "Hot",
+      hotDeviceCount: ko ? "고온 장비 수" : "Hot Device Count",
       filterEmergency: ko ? "긴급" : "Emergency",
       showing: ko ? "표시" : "Showing",
       of: ko ? " / " : " of ",
@@ -277,7 +311,7 @@ export default function RoboticsMonitoringDashboard(
       currentLocation: ko ? "현재 위치" : "Current location",
       sensorStatus: ko ? "센서 상태" : "Sensor status",
       batteryGauge: ko ? "배터리 게이지" : "Battery gauge",
-      batteryHistory: ko ? "최근 배터리" : "Recent battery level",
+      batteryHistory: ko ? "최근 배터리/온도" : "Recent battery & temperature",
       lastApprox: ko ? "최근 ~25분" : "Last ~25m",
       chat: ko ? "채팅" : "Chat",
       send: ko ? "전송" : "Send",
@@ -431,6 +465,13 @@ export default function RoboticsMonitoringDashboard(
       ? derivedDevices.reduce((s, d) => s + d.errorRate, 0) / total
       : 0
     const emergencies = derivedDevices.filter((d) => d.emergency).length
+    const hotDevices = derivedDevices.filter(
+      (d) => d.temperature >= abnormalTempThreshold
+    ).length
+    const production = derivedDevices.filter((d) => {
+      const mission = (d.mission ?? "").trim().toUpperCase()
+      return mission === "PICK" || mission === "PACK"
+    }).length
 
     return {
       total,
@@ -443,8 +484,10 @@ export default function RoboticsMonitoringDashboard(
       avgTemp,
       avgErrorRate,
       emergencies,
+      hotDevices,
+      production,
     }
-  }, [derivedDevices, deviceEvents])
+  }, [abnormalTempThreshold, derivedDevices, deviceEvents])
 
   const activeSummary = useMemo(() => {
     const total = derivedDevices.length
@@ -612,9 +655,9 @@ export default function RoboticsMonitoringDashboard(
   const getEventSeverityColor = useCallback(
     (severity: string | undefined) => {
       const s = (severity ?? "").toUpperCase()
-      if (s === "CRITICAL") return "#FF4D6D"
-      if (s === "WARNING") return "#FFB020"
-      if (s === "INFO") return "#60A5FA"
+      if (s === "CRITICAL" || s === "ERROR") return "#EF4444"
+      if (s === "WARN" || s === "WARNING") return "#F59E0B"
+      if (s === "INFO") return "#3B82F6"
       return textSecondary
     },
     [textSecondary]
@@ -645,6 +688,33 @@ export default function RoboticsMonitoringDashboard(
 
   const closeOnlineOfflineModal = useCallback(() => {
     startTransition(() => setOnlineOfflineModalOpen(false))
+  }, [])
+
+  const openOutageModal = useCallback(() => {
+    startTransition(() => setOutageModalOpen(true))
+  }, [])
+
+  const closeOutageModal = useCallback(() => {
+    startTransition(() => setOutageModalOpen(false))
+  }, [])
+
+  const openThroughputModal = useCallback(() => {
+    startTransition(() => setThroughputModalOpen(true))
+  }, [])
+
+  const closeThroughputModal = useCallback(() => {
+    startTransition(() => setThroughputModalOpen(false))
+  }, [])
+
+  const openUptimeModal = useCallback(() => {
+    startTransition(() => {
+      setUptimeModalOpen(true)
+      setUptimeFilter("all")
+    })
+  }, [])
+
+  const closeUptimeModal = useCallback(() => {
+    startTransition(() => setUptimeModalOpen(false))
   }, [])
 
   const closeChat = useCallback(() => {
@@ -684,10 +754,11 @@ export default function RoboticsMonitoringDashboard(
   }, [chatInput, language])
 
   const copilotInsights = useMemo(() => {
+    const HOT_TEMP_C = 90
     const total = derivedDevices.length
     const offline = derivedDevices.filter((d) => d.status === "Offline").length
     const low = derivedDevices.filter((d) => d.battery <= lowBatteryThreshold).length
-    const hot = derivedDevices.filter((d) => d.temperature >= abnormalTempThreshold).length
+    const hot = derivedDevices.filter((d) => d.temperature > HOT_TEMP_C).length
     const emergency = derivedDevices.filter((d) => d.emergency).length
 
     const anomalies = derivedDevices
@@ -738,113 +809,32 @@ export default function RoboticsMonitoringDashboard(
 
   const logs = useMemo(() => {
     if (!selected) return []
-    const cpu = selected.cpuPct ?? selected.errorRate * 10
-    const mem = selected.memPct ?? 0
-    const speed = selected.speedMps ?? 0
-    const lastSeq = selected.lastSeq ?? 0
-    const errCode = selected.errorCode?.trim()
-    const base = [
-      {
-        t: "Telemetry",
-        msg: `시퀀스 ${lastSeq} • 속도 ${speed.toFixed(2)} m/s`,
-        sev: "info" as const,
-      },
-      {
-        t: "리소스",
-        msg: `CPU ${cpu.toFixed(1)}% • MEM ${mem.toFixed(1)}%`,
+
+    const events = [...(deviceEvents[selected.id] ?? [])]
+    events.sort((a, b) => {
+      const ta = Date.parse(a.payload?.ts ?? a.createdAt ?? "")
+      const tb = Date.parse(b.payload?.ts ?? b.createdAt ?? "")
+      return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta)
+    })
+
+    return events.slice(0, 8).map((ev) => {
+      const severity = (ev.severity ?? "").toUpperCase()
+      const ts = ev.payload?.ts ?? ev.createdAt ?? ""
+      const stamp = formatKoreanRelativeTime(ts).replace(" 전", "전")
+      const payloadText = ev.payload ? JSON.stringify(ev.payload) : "{}"
+      return {
+        t: ev.eventType ?? "UNKNOWN",
+        msg: payloadText,
+        stamp,
         sev:
-          cpu >= 90 || mem >= 90
+          severity === "CRITICAL" || severity === "ERROR"
             ? ("error" as const)
-            : cpu >= 75 || mem >= 75
-            ? ("warn" as const)
-            : ("info" as const),
-      },
-      {
-        t: "온도",
-        msg: `코어 ${formatTemp(selected.temperature)} • 임계 ${formatTemp(abnormalTempThreshold)}`,
-        sev:
-          selected.temperature >= abnormalTempThreshold
-            ? ("error" as const)
-            : ("info" as const),
-      },
-      {
-        t: "안전",
-        msg: selected.emergency
-          ? "비상 정지 감지 • 운영자 확인 필요"
-          : selected.bumper
-            ? "범퍼 이벤트 감지"
-            : selected.obstacle
-              ? "장애물 감지"
-              : "안전 시스템 정상",
-        sev: selected.emergency ? ("error" as const) : ("info" as const),
-      },
-      {
-        t: "진단",
-        msg: errCode
-          ? `오류 코드 ${errCode}`
-          : `에러율 ${selected.errorRate.toFixed(1)}% • 최근 15분`,
-        sev:
-          errCode
-            ? ("error" as const)
-            : selected.errorRate >= 6
-            ? ("error" as const)
-            : selected.errorRate >= 2.5
+            : severity === "WARN" || severity === "WARNING"
               ? ("warn" as const)
               : ("info" as const),
-      },
-    ]
-
-    const extraA = {
-      t: "통신",
-      msg:
-        selected.status === "Offline"
-          ? `연결 끊김 • 마지막 수신 ${Math.round(selected.lastSeenMinutes)}분 전`
-          : `링크 정상 • 마지막 수신 ${selected.updatedAt ?? selected.lastSeenAt ?? "N/A"}`,
-      sev:
-        selected.status === "Offline"
-          ? ("error" as const)
-          : ("info" as const),
-    }
-    const extraB = {
-      t: "운영",
-      msg:
-        selected.mode?.toLowerCase() === "maintenance"
-          ? "정비 모드 • 이동 제한"
-          : selected.mission
-            ? `미션 진행 중: ${selected.mission}`
-            : "대기 중",
-      sev:
-        selected.status === "Error"
-          ? ("error" as const)
-          : selected.status === "Warning"
-            ? ("warn" as const)
-            : ("info" as const),
-    }
-
-    const eventLogs = (deviceEvents[selected.id] ?? []).slice(-3).map((ev) => ({
-      t: `이벤트:${ev.eventType}`,
-      msg: `${ev.severity} • seq ${ev.payload?.seq ?? "-"} • ${ev.payload?.ts ?? ev.createdAt ?? ""}`,
-      sev:
-        ev.severity === "CRITICAL" || ev.severity === "ERROR"
-          ? ("error" as const)
-          : ev.severity === "WARN" || ev.severity === "WARNING"
-            ? ("warn" as const)
-            : ("info" as const),
-    }))
-
-    const all = [...eventLogs, ...base, extraA, extraB].slice(0, 8)
-
-    const rank = (sev: "info" | "warn" | "error") =>
-      sev === "error" ? 0 : sev === "warn" ? 1 : 2
-    all.sort((a, b) => rank(a.sev) - rank(b.sev))
-
-    return all.map((x, idx) => {
-      const minute = clamp(((tick + idx * 9) % 59) + 1, 1, 59)
-      const stamp =
-        selected.status === "Offline" ? `-${minute}m` : `${minute}m ago`
-      return { ...x, stamp }
+      }
     })
-  }, [selected, abnormalTempThreshold, tick, deviceEvents])
+  }, [selected, deviceEvents])
 
   const currentLocation = useMemo(() => {
     if (!selected) return ""
@@ -852,10 +842,11 @@ export default function RoboticsMonitoringDashboard(
       typeof selected.posX === "number" &&
       typeof selected.posY === "number" &&
       typeof selected.theta === "number"
+    const mapId = selected.mapId ?? selected.site ?? "N/A"
     if (hasPos) {
-      return `${selected.site} • 맵 ${selected.mapId ?? "N/A"} • x:${selected.posX!.toFixed(2)} y:${selected.posY!.toFixed(2)} θ:${selected.theta!.toFixed(2)}`
+      return `${mapId} • x:${selected.posX!.toFixed(2)} • y:${selected.posY!.toFixed(2)} • theta:${selected.theta!.toFixed(2)}`
     }
-    return `${selected.site} • 위치 정보 없음`
+    return `${mapId} • x:- • y:- • theta:-`
   }, [selected])
 
   const sensorIndicators = useMemo(() => {
@@ -865,60 +856,36 @@ export default function RoboticsMonitoringDashboard(
         state: "ok" | "warn" | "error"
         detail: string
       }[]
-    const commsState = selected.status === "Offline" ? "error" : "ok"
-    const thermalState =
-      selected.temperature >= abnormalTempThreshold + 10
-        ? "error"
-        : selected.temperature >= abnormalTempThreshold
-          ? "warn"
-          : "ok"
-    const powerState =
-      selected.battery <= Math.max(2, lowBatteryThreshold * 0.5)
-        ? "error"
-        : selected.battery <= lowBatteryThreshold
-          ? "warn"
-          : "ok"
-    const safetyState = selected.emergency ? "error" : "ok"
-    const diagState =
-      selected.errorRate >= 6
-        ? "error"
-        : selected.errorRate >= 2.5
-          ? "warn"
-          : "ok"
+    const speed = selected.speedMps ?? 0
+    const cpu = selected.cpuPct ?? 0
+    const mem = selected.memPct ?? 0
+    const lastSeenRelative = formatKoreanRelativeTime(
+      selected.updatedAt ?? selected.lastSeenAt
+    ).replace(" 전", "전")
 
     return [
       {
-        label: "Comms",
-        state: commsState,
-        detail:
-          commsState === "error"
-            ? "연결 끊김"
-            : `속도 ${(selected.speedMps ?? 0).toFixed(2)} m/s`,
+        label: "Speed",
+        state: selected.status === "Offline" ? "error" : speed <= 0.01 ? "warn" : "ok",
+        detail: `${speed.toFixed(2)} m/s`,
       },
       {
-        label: "Thermal",
-        state: thermalState,
-        detail: `Core ${formatTemp(selected.temperature)}`,
+        label: "CPU",
+        state: cpu >= 90 ? "error" : cpu >= 75 ? "warn" : "ok",
+        detail: `${cpu.toFixed(1)}%`,
       },
       {
-        label: "Power",
-        state: powerState,
-        detail: `Battery ${formatBattery(selected.battery)}%`,
+        label: "Memory",
+        state: mem >= 90 ? "error" : mem >= 75 ? "warn" : "ok",
+        detail: `${mem.toFixed(1)}%`,
       },
       {
-        label: "Safety",
-        state: safetyState,
-        detail: safetyState === "error" ? "비상정지" : "정상",
-      },
-      {
-        label: "Diagnostics",
-        state: diagState,
-        detail: selected.errorCode
-          ? `코드 ${selected.errorCode}`
-          : `CPU ${(selected.cpuPct ?? 0).toFixed(1)}%`,
+        label: "마지막 접속시간",
+        state: selected.status === "Offline" ? "error" : "ok",
+        detail: lastSeenRelative,
       },
     ]
-  }, [selected, abnormalTempThreshold, lowBatteryThreshold])
+  }, [selected])
 
   const batterySeries = useMemo(() => {
     if (!selected) return [] as number[]
@@ -930,6 +897,19 @@ export default function RoboticsMonitoringDashboard(
       const trend = (i - (n - 1)) * 0.22
       const v = clamp(base + wobble * 0.6 + trend, 0, 100)
       series.push(v)
+    }
+    return series
+  }, [selected, tick])
+
+  const tempSeries = useMemo(() => {
+    if (!selected) return [] as number[]
+    const n = 26
+    const base = selected.temperature
+    const series: number[] = []
+    for (let i = 0; i < n; i++) {
+      const wobble = ((tick + i * 5 + selected.id.length * 11) % 13) - 6
+      const trend = (i - (n - 1)) * 0.06
+      series.push(base + wobble * 0.22 + trend)
     }
     return series
   }, [selected, tick])
@@ -972,13 +952,291 @@ export default function RoboticsMonitoringDashboard(
     }
   }, [sortedFleetDevices, deviceEvents])
 
+  const outageEventRows = useMemo(() => {
+    const rows: Array<{
+      deviceId: string
+      mapLabel: string
+      eventType: string
+      severity: string
+      ts: string
+    }> = []
+    for (const [deviceId, list] of Object.entries(deviceEvents)) {
+      if (!list.length) continue
+      const last = list[list.length - 1]
+      const device = derivedDevices.find((d) => d.id === deviceId)
+      rows.push({
+        deviceId,
+        mapLabel: device?.mapId ?? device?.site ?? "N/A",
+        eventType: last.eventType ?? "UNKNOWN",
+        severity: last.severity ?? "UNKNOWN",
+        ts: last.payload?.ts ?? last.createdAt ?? "",
+      })
+    }
+    const sevRank = (s: string) => {
+      const x = s.toUpperCase()
+      if (x === "CRITICAL" || x === "ERROR") return 0
+      if (x === "WARN" || x === "WARNING") return 1
+      if (x === "INFO") return 2
+      return 3
+    }
+    rows.sort((a, b) => {
+      const r = sevRank(a.severity) - sevRank(b.severity)
+      if (r !== 0) return r
+      return b.ts.localeCompare(a.ts)
+    })
+    return rows
+  }, [deviceEvents, derivedDevices])
+
+  const throughputChartPoints = useMemo(() => {
+    const sortedChart = [...(throughputData?.chart ?? [])].sort((a, b) => {
+      const ta = parseKoreanTimestampMs(a.time)
+      const tb = parseKoreanTimestampMs(b.time)
+      const aValid = Number.isFinite(ta)
+      const bValid = Number.isFinite(tb)
+      if (aValid && bValid) return ta - tb
+      if (aValid) return -1
+      if (bValid) return 1
+      return a.time.localeCompare(b.time)
+    })
+    return sortedChart.map((p) => {
+      const full = formatKoreanDateTime(p.time)
+      const short = formatKoreanTime(p.time)
+      const fallback = p.time || "-"
+      return {
+        time: full === "-" ? fallback : full,
+        count: p.count,
+        shortTime: short === "-" ? fallback : short,
+      }
+    })
+  }, [throughputData])
+
+  const throughputSeries = useMemo(() => {
+    return throughputChartPoints.map((p) => p.count)
+  }, [throughputChartPoints])
+
+  const throughputStats = useMemo(() => {
+    if (!throughputSeries.length) {
+      return { current: 0, avg: 0, max: 0, min: 0 }
+    }
+    const current = throughputSeries[throughputSeries.length - 1] ?? 0
+    const sum = throughputSeries.reduce((acc, v) => acc + v, 0)
+    const avg = sum / throughputSeries.length
+    const max = Math.max(...throughputSeries)
+    const min = Math.min(...throughputSeries)
+    const firstPoint = throughputChartPoints[0]
+    const lastPoint = throughputChartPoints[throughputChartPoints.length - 1]
+    const peakPoint =
+      throughputChartPoints.find((p) => p.count === max) ?? lastPoint
+    return {
+      current,
+      avg,
+      max,
+      min,
+      startTime: firstPoint?.shortTime ?? "-",
+      endTime: lastPoint?.shortTime ?? "-",
+      peakTime: peakPoint?.shortTime ?? "-",
+      currentTime: lastPoint?.shortTime ?? "-",
+    }
+  }, [throughputSeries, throughputChartPoints])
+
+  const throughputPlot = useMemo(() => {
+    const n = throughputChartPoints.length
+    const width = 860
+    const height = 240
+    const padLeft = 56
+    const padRight = 56
+    const padTop = 12
+    const padBottom = 72
+    const innerW = width - padLeft - padRight
+    const innerH = height - padTop - padBottom
+
+    if (!n) {
+      return {
+        width,
+        height,
+        padLeft,
+        padRight,
+        padTop,
+        padBottom,
+        points: "",
+        areaPath: "",
+        xTicks: [] as Array<{ x: number; label: string }>,
+        yTicks: [] as Array<{ y: number; value: number }>,
+      }
+    }
+
+    const values = throughputChartPoints.map((p) => p.count)
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    const span = Math.max(1e-6, max - min)
+
+    const coords = throughputChartPoints.map((p, i) => {
+      const x =
+        n === 1 ? padLeft + innerW / 2 : padLeft + (i / (n - 1)) * innerW
+      const y = padTop + (1 - (p.count - min) / span) * innerH
+      return { x, y, label: p.shortTime }
+    })
+
+    const points = coords.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ")
+    const areaPath = points
+      ? `M ${points} L ${(padLeft + innerW).toFixed(2)},${(padTop + innerH).toFixed(2)} L ${padLeft.toFixed(2)},${(padTop + innerH).toFixed(2)} Z`
+      : ""
+
+    const yTicks = [max, (max + min) / 2, min].map((v) => ({
+      value: v,
+      y: padTop + (1 - (v - min) / span) * innerH,
+    }))
+
+    const maxTickCount = 6
+    const step = Math.max(1, Math.ceil(n / maxTickCount))
+    const xTicks = coords
+      .filter((_, i) => i % step === 0 || i === n - 1)
+      .map((c) => ({ x: c.x, label: c.label }))
+
+    return {
+      width,
+      height,
+      padLeft,
+      padRight,
+      padTop,
+      padBottom,
+      points,
+      areaPath,
+      xTicks,
+      yTicks,
+    }
+  }, [throughputChartPoints])
+
+  const utilizationKpiAverage = useMemo(() => {
+    if (!utilizationDevices.length) return null
+    const sum = utilizationDevices.reduce((acc, d) => acc + d.utilizationPct, 0)
+    return sum / utilizationDevices.length
+  }, [utilizationDevices])
+
+  const uptimeRows = useMemo(() => {
+    return utilizationDevices.map((d) => {
+      const pct = d.utilizationPct
+      const level: "normal" | "caution" | "warning" =
+        pct >= 95 ? "normal" : pct >= 80 ? "caution" : "warning"
+      return { id: d.deviceId, pct, level }
+    })
+  }, [utilizationDevices])
+
+  const uptimeKpiValueStr =
+    utilizationKpiAverage === null ? "—" : `${utilizationKpiAverage.toFixed(1)}%`
+
+  const uptimeKpiColor =
+    utilizationKpiAverage === null
+      ? textSecondary
+      : utilizationKpiAverage >= 95
+        ? statusOnline
+        : utilizationKpiAverage >= 80
+          ? statusWarning
+          : statusError
+
+  const uptimeCounts = useMemo(() => {
+    let normal = 0
+    let caution = 0
+    let warning = 0
+    for (const r of uptimeRows) {
+      if (r.level === "normal") normal += 1
+      else if (r.level === "caution") caution += 1
+      else warning += 1
+    }
+    return { normal, caution, warning, total: uptimeRows.length }
+  }, [uptimeRows])
+
+  const uptimeFilteredRows = useMemo(() => {
+    const base =
+      uptimeFilter === "all"
+        ? uptimeRows
+        : uptimeRows.filter((r) => r.level === uptimeFilter)
+    const levelRank = (l: "normal" | "caution" | "warning") =>
+      l === "warning" ? 0 : l === "caution" ? 1 : 2
+    return [...base].sort((a, b) => {
+      const lr = levelRank(a.level) - levelRank(b.level)
+      if (lr !== 0) return lr
+      const pr = a.pct - b.pct
+      if (pr !== 0) return pr
+      return a.id.localeCompare(b.id)
+    })
+  }, [uptimeRows, uptimeFilter])
+
+  const uptimeLevelColor = useCallback(
+    (level: "normal" | "caution" | "warning") => {
+      if (level === "normal") return statusOnline
+      if (level === "caution") return statusWarning
+      return statusError
+    },
+    [statusOnline, statusWarning, statusError]
+  )
+
+  const uptimeLevelLabel = useCallback(
+    (level: "normal" | "caution" | "warning") => {
+      if (level === "normal") return ui.uptimeNormal
+      if (level === "caution") return ui.uptimeCaution
+      return ui.uptimeWarning
+    },
+    [ui]
+  )
+
+  const throughputBucketTimeLabel = useMemo(() => {
+    const chart = throughputData?.chart ?? []
+    if (!chart.length) return "-"
+    const firstRaw = chart[0]?.time ?? "-"
+    const lastRaw = chart[chart.length - 1]?.time ?? "-"
+    const firstParsed = parseKoreanTimestampMs(firstRaw)
+    const lastParsed = parseKoreanTimestampMs(lastRaw)
+    const start =
+      Number.isFinite(firstParsed) && firstRaw !== "-"
+        ? formatKoreanDateTime(firstRaw)
+        : firstRaw
+    const end =
+      Number.isFinite(lastParsed) && lastRaw !== "-"
+        ? formatKoreanDateTime(lastRaw)
+        : lastRaw
+    return `${start} ~ ${end}`
+  }, [throughputData])
+
   useEffect(() => {
-    if (!modalOpen && !fleetModalOpen && !onlineOfflineModalOpen) return
+    if (!uptimeModalOpen) return
+    const ac = new AbortController()
+    setUtilizationLoading(true)
+    setUtilizationError(null)
+    fetchDashboardUtilization(ac.signal)
+      .then((rows) => {
+        if (ac.signal.aborted) return
+        setUtilizationDevices(rows)
+      })
+      .catch((e) => {
+        if (ac.signal.aborted) return
+        setUtilizationError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        if (ac.signal.aborted) return
+        setUtilizationLoading(false)
+      })
+    return () => ac.abort()
+  }, [uptimeModalOpen])
+
+  useEffect(() => {
+    if (
+      !modalOpen &&
+      !fleetModalOpen &&
+      !onlineOfflineModalOpen &&
+      !outageModalOpen &&
+      !throughputModalOpen &&
+      !uptimeModalOpen
+    )
+      return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         closeModal()
         closeFleetModal()
         closeOnlineOfflineModal()
+        closeOutageModal()
+        closeThroughputModal()
+        closeUptimeModal()
       }
     }
     window.addEventListener("keydown", onKeyDown)
@@ -987,9 +1245,15 @@ export default function RoboticsMonitoringDashboard(
     modalOpen,
     fleetModalOpen,
     onlineOfflineModalOpen,
+    outageModalOpen,
+    throughputModalOpen,
+    uptimeModalOpen,
     closeModal,
     closeFleetModal,
     closeOnlineOfflineModal,
+    closeOutageModal,
+    closeThroughputModal,
+    closeUptimeModal,
   ])
 
   const isFixedWidth = style && style.width === "100%"
@@ -1123,6 +1387,12 @@ export default function RoboticsMonitoringDashboard(
             color={wsConnected ? statusOnline : statusOffline}
             font={monoFont}
           />
+          <Badge
+            label={`WS Last: ${lastWsMessageAt ? formatKoreanTime(lastWsMessageAt) : "-"}`}
+            color={lastWsMessageAt ? accent : textSecondary}
+            font={monoFont}
+            subtle
+          />
         </div>
       </header>
 
@@ -1139,7 +1409,7 @@ export default function RoboticsMonitoringDashboard(
           <KPI
             title={ui.kpiTotal}
             value={`${kpis.total}`}
-            hint={ui.hintAllUnits}
+            hint=""
             color={accent}
             bg={cardBackground}
             border={borderColor}
@@ -1152,7 +1422,7 @@ export default function RoboticsMonitoringDashboard(
           <KPI
             title={ui.kpiOnlineOffline}
             value={`${kpis.online} / ${kpis.offline}`}
-            hint={`${kpis.warning} warn • ${kpis.error} err`}
+            hint=""
             color={
               kpis.error > 0
                 ? statusError
@@ -1170,13 +1440,9 @@ export default function RoboticsMonitoringDashboard(
           />
           <KPI
             title={ui.kpiAvgBattery}
-            value={`${Math.round(kpis.avgBattery)}%`}
-            hint={`Low ≤ ${Math.round(lowBatteryThreshold)}%`}
-            color={
-              kpis.avgBattery <= lowBatteryThreshold
-                ? statusWarning
-                : accent
-            }
+            value={`${kpis.hotDevices} / ${kpis.total}`}
+            hint="Hot > 90°C"
+            color={kpis.hotDevices > 0 ? statusError : accent}
             bg={cardBackground}
             border={borderColor}
             textPrimary={textPrimary}
@@ -1186,186 +1452,43 @@ export default function RoboticsMonitoringDashboard(
           />
           <KPI
             title={ui.kpiAvgTemp}
-            value={`${Math.round(kpis.avgTemp)}°C`}
-            hint={`Hot ≥ ${Math.round(abnormalTempThreshold)}°C`}
-            color={
-              kpis.avgTemp >= abnormalTempThreshold ? statusError : accent
-            }
+            value={`${throughputData?.todayCount ?? 0}`}
+            hint=""
+            color={kpis.production > 0 ? accent : textSecondary}
             bg={cardBackground}
             border={borderColor}
             textPrimary={textPrimary}
             textSecondary={textSecondary}
             titleFont={monoFont}
             valueFont={headingFont}
+            onClick={openThroughputModal}
           />
           <KPI
             title={ui.kpiErrorRate}
-            value={`${kpis.avgErrorRate.toFixed(1)}%`}
-            hint={ui.hintRolling}
-            color={kpis.avgErrorRate >= 2.5 ? statusError : accent}
+            value={`${outageEventRows.length} / ${kpis.total}`}
+            hint=""
+            color={outageEventRows.length > 0 ? statusError : accent}
             bg={cardBackground}
             border={borderColor}
             textPrimary={textPrimary}
             textSecondary={textSecondary}
             titleFont={monoFont}
             valueFont={headingFont}
+            onClick={openOutageModal}
           />
           <KPI
             title={ui.kpiEmergency}
-            value={`${kpis.emergencies}`}
-            hint="Requires attention"
-            color={kpis.emergencies > 0 ? statusError : textSecondary}
+            value={uptimeKpiValueStr}
+            hint=""
+            color={uptimeKpiColor}
             bg={cardBackground}
             border={borderColor}
             textPrimary={textPrimary}
             textSecondary={textSecondary}
             titleFont={monoFont}
             valueFont={headingFont}
+            onClick={openUptimeModal}
           />
-        </section>
-      )}
-
-      {(showFilters || showSearch) && (
-        <section
-          aria-label={ui.filtersLabel}
-          style={{
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            padding: 12,
-            borderRadius: 14,
-            background: panelBackground,
-            border: `1px solid ${borderColor}`,
-            flexWrap: "wrap",
-            boxSizing: "border-box",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            {showFilters && (
-              <>
-                <FilterChip
-                  label={ui.filterOffline}
-                  active={filterOffline}
-                  color={statusOffline}
-                  font={monoFont}
-                />
-                <FilterChip
-                  label={`Low battery ≤ ${Math.round(lowBatteryThreshold)}%`}
-                  active={filterLowBattery}
-                  color={statusWarning}
-                  font={monoFont}
-                />
-                <FilterChip
-                  label={`Hot ≥ ${Math.round(abnormalTempThreshold)}°C`}
-                  active={filterAbnormalTemp}
-                  color={statusError}
-                  font={monoFont}
-                />
-                <FilterChip
-                  label={ui.filterEmergency}
-                  active={filterEmergency}
-                  color={statusError}
-                  font={monoFont}
-                />
-              </>
-            )}
-            <span
-              style={{
-                marginLeft: 6,
-                ...monoFont,
-                fontSize: coerceFontSize(monoFont?.fontSize, 12),
-                color: textSecondary,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {ui.showing} {filteredDevices.length}
-              {ui.of} {derivedDevices.length}
-            </span>
-          </div>
-
-          {showSearch && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  background: cardBackground,
-                  border: `1px solid ${borderColor}`,
-                  minWidth: 320,
-                  maxWidth: 420,
-                  width: "min(42vw, 420px)",
-                  boxSizing: "border-box",
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 999,
-                    background: withAlpha(accent, 0.6),
-                    boxShadow: `0 0 0 3px ${withAlpha(accent, 0.15)}`,
-                  }}
-                />
-                <input
-                  value={search}
-                  onChange={(e) =>
-                    startTransition(() => setSearch(e.target.value))
-                  }
-                  placeholder={ui.searchPlaceholder}
-                  aria-label="Search devices"
-                  style={{
-                    width: "100%",
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    color: textPrimary,
-                    ...bodyFont,
-                    fontSize: coerceFontSize(bodyFont?.fontSize, 14),
-                    lineHeight: bodyFont?.lineHeight ?? "1.3em",
-                    letterSpacing: bodyFont?.letterSpacing ?? "-0.01em",
-                  }}
-                />
-                {search.trim() ? (
-                  <button
-                    type="button"
-                    onClick={() => startTransition(() => setSearch(""))}
-                    aria-label="Clear search"
-                    style={{
-                      border: `1px solid ${borderColor}`,
-                      background: panelBackground,
-                      color: textSecondary,
-                      borderRadius: 10,
-                      padding: "6px 8px",
-                      cursor: "pointer",
-                      ...monoFont,
-                      fontSize: coerceFontSize(monoFont?.fontSize, 12),
-                    }}
-                  >
-                    {ui.clear}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          )}
         </section>
       )}
 
@@ -2302,9 +2425,9 @@ export default function RoboticsMonitoringDashboard(
                         valueFont={headingFont}
                       />
                       <MetricCard
-                        label={ui.filterHot}
-                        value={`${copilotInsights.hot}`}
-                        hint={`≥ ${Math.round(abnormalTempThreshold)}°C`}
+                        label={ui.hotDeviceCount}
+                        value={`${copilotInsights.hot} / ${copilotInsights.total}`}
+                        hint={`Hot > 90°C`}
                         color={statusError}
                         bg={panelBackground}
                         border={borderColor}
@@ -2687,7 +2810,7 @@ export default function RoboticsMonitoringDashboard(
                       textOverflow: "ellipsis",
                     }}
                   >
-                    {ui.robotId}: {selected.id} • {ui.model}: {selected.model}
+                    {ui.robotId}: {selected.id}
                   </div>
                   <div
                     style={{
@@ -3003,10 +3126,10 @@ export default function RoboticsMonitoringDashboard(
                           {logs.slice(0, 8).map((l, idx) => {
                             const sevColor =
                               l.sev === "error"
-                                ? statusError
+                                ? "#EF4444"
                                 : l.sev === "warn"
-                                  ? statusWarning
-                                  : textSecondary
+                                  ? "#F59E0B"
+                                  : "#3B82F6"
                             return (
                               <div
                                 key={`${l.t}-${idx}-modal`}
@@ -3057,9 +3180,8 @@ export default function RoboticsMonitoringDashboard(
                                       13
                                     ),
                                     color: textPrimary,
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
+                                    whiteSpace: "pre-wrap",
+                                    wordBreak: "break-all",
                                   }}
                                 >
                                   {l.msg}
@@ -3114,22 +3236,111 @@ export default function RoboticsMonitoringDashboard(
                         </div>
                       </div>
 
-                      <div style={{ height: 96, width: "100%" }}>
-                        <Sparkline
-                          values={batterySeries}
-                          stroke={
-                            selected.battery <= lowBatteryThreshold
-                              ? statusWarning
-                              : accent
-                          }
-                          fill={withAlpha(
-                            selected.battery <= lowBatteryThreshold
-                              ? statusWarning
-                              : accent,
-                            0.12
-                          )}
-                          grid={withAlpha(borderColor, 0.55)}
-                        />
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr",
+                          gap: 10,
+                        }}
+                      >
+                        <div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                              marginBottom: 6,
+                            }}
+                          >
+                            <span
+                              style={{
+                                ...monoFont,
+                                fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                                color: textSecondary,
+                              }}
+                            >
+                              Battery
+                            </span>
+                            <span
+                              style={{
+                                ...monoFont,
+                                fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                                color: textSecondary,
+                              }}
+                            >
+                              {formatBattery(selected.battery)}% / Ref {Math.round(lowBatteryThreshold)}%
+                            </span>
+                          </div>
+                          <div style={{ height: 72, width: "100%" }}>
+                            <Sparkline
+                              values={batterySeries}
+                              stroke={
+                                selected.battery <= lowBatteryThreshold
+                                  ? statusWarning
+                                  : accent
+                              }
+                              fill={withAlpha(
+                                selected.battery <= lowBatteryThreshold
+                                  ? statusWarning
+                                  : accent,
+                                0.12
+                              )}
+                              grid={withAlpha(borderColor, 0.55)}
+                              referenceValue={lowBatteryThreshold}
+                              referenceColor={statusWarning}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                              marginBottom: 6,
+                            }}
+                          >
+                            <span
+                              style={{
+                                ...monoFont,
+                                fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                                color: textSecondary,
+                              }}
+                            >
+                              Temperature
+                            </span>
+                            <span
+                              style={{
+                                ...monoFont,
+                                fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                                color: textSecondary,
+                              }}
+                            >
+                              {formatTemp(selected.temperature)} / Ref {Math.round(abnormalTempThreshold)}°C
+                            </span>
+                          </div>
+                          <div style={{ height: 72, width: "100%" }}>
+                            <Sparkline
+                              values={tempSeries}
+                              stroke={
+                                selected.temperature >= abnormalTempThreshold
+                                  ? statusError
+                                  : "#60A5FA"
+                              }
+                              fill={withAlpha(
+                                selected.temperature >= abnormalTempThreshold
+                                  ? statusError
+                                  : "#60A5FA",
+                                0.12
+                              )}
+                              grid={withAlpha(borderColor, 0.55)}
+                              referenceValue={abnormalTempThreshold}
+                              referenceColor={statusError}
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3516,6 +3727,849 @@ export default function RoboticsMonitoringDashboard(
                         </span>
                       </button>
                     ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {throughputModalOpen ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 57,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              background: withAlpha(background, 0.72),
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="생산량 지표"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) closeThroughputModal()
+            }}
+          >
+            <div
+              style={{
+                width: "min(920px, 100%)",
+                maxHeight: "100%",
+                overflow: "hidden",
+                borderRadius: 16,
+                background: panelBackground,
+                border: `1px solid ${borderColor}`,
+                boxShadow: `0 18px 70px ${withAlpha("#000", 0.55)}`,
+                display: "flex",
+                flexDirection: "column",
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  padding: 14,
+                  borderBottom: `1px solid ${borderColor}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{
+                    ...headingFont,
+                    fontSize: coerceFontSize(headingFont?.fontSize, 18),
+                    color: textPrimary,
+                  }}
+                >
+                  {ui.kpiAvgTemp}
+                </div>
+                <button
+                  type="button"
+                  onClick={closeThroughputModal}
+                  style={{
+                    border: `1px solid ${borderColor}`,
+                    background: cardBackground,
+                    color: textPrimary,
+                    borderRadius: 12,
+                    padding: "8px 10px",
+                    cursor: "pointer",
+                    ...monoFont,
+                    fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                  }}
+                >
+                  {ui.close}
+                </button>
+              </div>
+
+              <div style={{ padding: 14, overflow: "auto", display: "grid", gap: 12 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                    gap: 10,
+                  }}
+                >
+                  {[
+                    {
+                      label: "최근 15분 생산량",
+                      value: throughputData?.current15MinCount ?? 0,
+                    },
+                    {
+                      label: "시간당 환산 생산률",
+                      value: throughputData?.hourlyRate ?? 0,
+                    },
+                    {
+                      label: "오늘 총 생산량",
+                      value: throughputData?.todayCount ?? 0,
+                    },
+                    {
+                      label: "이전 15분 대비",
+                      value: `${(throughputData?.changeRate ?? 0).toFixed(2)}%`,
+                    },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      style={{
+                        borderRadius: 12,
+                        border: `1px solid ${borderColor}`,
+                        background: cardBackground,
+                        padding: 12,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          ...monoFont,
+                          fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                          color: textSecondary,
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                      <span
+                        style={{
+                          ...headingFont,
+                          fontSize: coerceFontSize(headingFont?.fontSize, 20),
+                          color: textPrimary,
+                        }}
+                      >
+                        {typeof item.value === "number"
+                          ? item.value.toLocaleString()
+                          : item.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${borderColor}`,
+                    background: cardBackground,
+                    padding: 12,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                    }}
+                  >
+                    <span
+                      style={{
+                        ...headingFont,
+                        fontSize: coerceFontSize(headingFont?.fontSize, 15),
+                        color: textPrimary,
+                      }}
+                    >
+                      시간 흐름 추세
+                    </span>
+                    <span
+                      style={{
+                        ...monoFont,
+                        fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                        color: textSecondary,
+                      }}
+                    >
+                      기준 시간: {throughputBucketTimeLabel}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      width: "100%",
+                      minHeight: throughputPlot.height,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "relative",
+                        width: "100%",
+                        maxWidth: throughputPlot.width,
+                        aspectRatio: `${throughputPlot.width} / ${throughputPlot.height}`,
+                      }}
+                    >
+                      <svg
+                        width="100%"
+                        height="100%"
+                        viewBox={`0 0 ${throughputPlot.width} ${throughputPlot.height}`}
+                        preserveAspectRatio="xMidYMid meet"
+                        role="img"
+                        aria-label="Throughput time-count chart"
+                      >
+                        <path
+                          d={`M ${throughputPlot.padLeft},${throughputPlot.padTop} V ${throughputPlot.height - throughputPlot.padBottom} H ${throughputPlot.width - throughputPlot.padRight}`}
+                          stroke={withAlpha(borderColor, 0.85)}
+                          strokeWidth={1.2}
+                          fill="none"
+                        />
+                        {throughputPlot.yTicks.map((t, idx) => (
+                          <g key={`y-${idx}`}>
+                            <path
+                              d={`M ${throughputPlot.padLeft},${t.y} H ${throughputPlot.width - throughputPlot.padRight}`}
+                              stroke={withAlpha(borderColor, 0.4)}
+                              strokeWidth={1}
+                              fill="none"
+                            />
+                            <text
+                              x={throughputPlot.padLeft - 8}
+                              y={t.y + 4}
+                              textAnchor="end"
+                              style={{
+                                fill: textSecondary,
+                                fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                                fontFamily: monoFont?.fontFamily,
+                              }}
+                            >
+                              {Math.round(t.value).toLocaleString()}
+                            </text>
+                          </g>
+                        ))}
+                        {throughputPlot.areaPath ? (
+                          <path
+                            d={throughputPlot.areaPath}
+                            fill={withAlpha(accent, 0.14)}
+                            stroke="none"
+                          />
+                        ) : null}
+                        {throughputPlot.points ? (
+                          <polyline
+                            points={throughputPlot.points}
+                            fill="none"
+                            stroke={accent}
+                            strokeWidth={2.25}
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                          />
+                        ) : null}
+                        {throughputPlot.xTicks.map((t, idx) => (
+                          <g key={`x-${idx}`}>
+                            <path
+                              d={`M ${t.x},${throughputPlot.height - throughputPlot.padBottom} V ${throughputPlot.height - throughputPlot.padBottom + 4}`}
+                              stroke={withAlpha(borderColor, 0.85)}
+                              strokeWidth={1}
+                              fill="none"
+                            />
+                            <text
+                              x={t.x}
+                              y={throughputPlot.height - throughputPlot.padBottom + 18}
+                              textAnchor="middle"
+                              style={{
+                                fill: textSecondary,
+                                fontSize: coerceFontSize(monoFont?.fontSize, 10),
+                                fontFamily: monoFont?.fontFamily,
+                              }}
+                            >
+                              {t.label}
+                            </text>
+                          </g>
+                        ))}
+                      </svg>
+                      {throughputSeries.length ? (
+                        <>
+                          <span
+                            style={{
+                              position: "absolute",
+                              right: 8,
+                              top: 2,
+                              ...monoFont,
+                              fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                              color: textPrimary,
+                              background: withAlpha(accent, 0.16),
+                              border: `1px solid ${withAlpha(accent, 0.42)}`,
+                              padding: "2px 6px",
+                              borderRadius: 6,
+                            }}
+                          >
+                            now {Math.round(throughputStats.current).toLocaleString()} @ {throughputStats.currentTime}
+                          </span>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                  {!throughputSeries.length ? (
+                    <div
+                      style={{
+                        ...bodyFont,
+                        fontSize: coerceFontSize(bodyFont?.fontSize, 13),
+                        color: textSecondary,
+                      }}
+                    >
+                      throughput chart 데이터가 아직 없습니다.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {uptimeModalOpen ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 57,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              background: withAlpha(background, 0.72),
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={ui.uptimeTitle}
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) closeUptimeModal()
+            }}
+          >
+            <div
+              style={{
+                width: "min(880px, 100%)",
+                maxHeight: "100%",
+                overflow: "hidden",
+                borderRadius: 16,
+                background: panelBackground,
+                border: `1px solid ${borderColor}`,
+                boxShadow: `0 18px 70px ${withAlpha("#000", 0.55)}`,
+                display: "flex",
+                flexDirection: "column",
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  padding: 14,
+                  borderBottom: `1px solid ${borderColor}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{
+                    ...headingFont,
+                    fontSize: coerceFontSize(headingFont?.fontSize, 18),
+                    color: textPrimary,
+                  }}
+                >
+                  {ui.uptimeTitle}
+                </div>
+                <button
+                  type="button"
+                  onClick={closeUptimeModal}
+                  style={{
+                    border: `1px solid ${borderColor}`,
+                    background: cardBackground,
+                    color: textPrimary,
+                    borderRadius: 12,
+                    padding: "8px 10px",
+                    cursor: "pointer",
+                    ...monoFont,
+                    fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                  }}
+                >
+                  {ui.close}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  padding: 14,
+                  overflow: "auto",
+                  display: "grid",
+                  gap: 12,
+                }}
+              >
+                {utilizationLoading ? (
+                  <div
+                    style={{
+                      ...bodyFont,
+                      fontSize: coerceFontSize(bodyFont?.fontSize, 13),
+                      color: textSecondary,
+                    }}
+                  >
+                    {ui.uptimeLoading}
+                  </div>
+                ) : null}
+                {utilizationError ? (
+                  <div
+                    style={{
+                      ...bodyFont,
+                      fontSize: coerceFontSize(bodyFont?.fontSize, 13),
+                      color: statusError,
+                    }}
+                  >
+                    {utilizationError}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  {(
+                    [
+                      {
+                        key: "all",
+                        label: `${ui.uptimeAll} (${uptimeCounts.total})`,
+                        color: textSecondary,
+                      },
+                      {
+                        key: "normal",
+                        label: `${ui.uptimeNormal} (${uptimeCounts.normal})`,
+                        color: statusOnline,
+                      },
+                      {
+                        key: "caution",
+                        label: `${ui.uptimeCaution} (${uptimeCounts.caution})`,
+                        color: statusWarning,
+                      },
+                      {
+                        key: "warning",
+                        label: `${ui.uptimeWarning} (${uptimeCounts.warning})`,
+                        color: statusError,
+                      },
+                    ] as Array<{
+                      key: "all" | "normal" | "caution" | "warning"
+                      label: string
+                      color: string
+                    }>
+                  ).map((b) => {
+                    const active = uptimeFilter === b.key
+                    return (
+                      <button
+                        key={b.key}
+                        type="button"
+                        onClick={() =>
+                          startTransition(() => setUptimeFilter(b.key))
+                        }
+                        style={{
+                          border: `1px solid ${active ? b.color : borderColor}`,
+                          background: active
+                            ? withAlpha(b.color, 0.18)
+                            : cardBackground,
+                          color: active ? b.color : textPrimary,
+                          borderRadius: 999,
+                          padding: "6px 12px",
+                          cursor: "pointer",
+                          ...monoFont,
+                          fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: 999,
+                            background: b.color,
+                            display: "inline-block",
+                          }}
+                        />
+                        {b.label}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                    gap: 10,
+                  }}
+                >
+                  {[
+                    {
+                      label: ui.uptimeNormal,
+                      value: uptimeCounts.normal,
+                      color: statusOnline,
+                      hint: "≥ 95%",
+                    },
+                    {
+                      label: ui.uptimeCaution,
+                      value: uptimeCounts.caution,
+                      color: statusWarning,
+                      hint: "80 ~ 95%",
+                    },
+                    {
+                      label: ui.uptimeWarning,
+                      value: uptimeCounts.warning,
+                      color: statusError,
+                      hint: "< 80%",
+                    },
+                  ].map((s) => (
+                    <div
+                      key={s.label}
+                      style={{
+                        borderRadius: 12,
+                        border: `1px solid ${borderColor}`,
+                        background: cardBackground,
+                        padding: 12,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
+                    >
+                      <span
+                        style={{
+                          ...monoFont,
+                          fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                          color: textSecondary,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: 999,
+                            background: s.color,
+                            display: "inline-block",
+                          }}
+                        />
+                        {s.label}
+                        <span style={{ color: textSecondary }}>
+                          · {s.hint}
+                        </span>
+                      </span>
+                      <span
+                        style={{
+                          ...headingFont,
+                          fontSize: coerceFontSize(headingFont?.fontSize, 22),
+                          color: s.color,
+                        }}
+                      >
+                        {s.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${borderColor}`,
+                    background: cardBackground,
+                    padding: 12,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  {uptimeFilteredRows.length === 0 ? (
+                    <div
+                      style={{
+                        ...bodyFont,
+                        fontSize: coerceFontSize(bodyFont?.fontSize, 13),
+                        color: textSecondary,
+                      }}
+                    >
+                      {ui.uptimeEmpty}
+                    </div>
+                  ) : (
+                    uptimeFilteredRows.map((row) => {
+                      const color = uptimeLevelColor(row.level)
+                      const label = uptimeLevelLabel(row.level)
+                      return (
+                        <div
+                          key={row.id}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns:
+                              "minmax(120px, 1.1fr) 1fr auto auto",
+                            alignItems: "center",
+                            gap: 12,
+                          }}
+                        >
+                          <span
+                            style={{
+                              ...monoFont,
+                              fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                              color: textPrimary,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {row.id}
+                          </span>
+                          <div
+                            style={{
+                              width: "100%",
+                              height: 10,
+                              borderRadius: 999,
+                              background: withAlpha(borderColor, 0.6),
+                              overflow: "hidden",
+                              position: "relative",
+                            }}
+                            aria-label={`${row.id} uptime ${row.pct.toFixed(
+                              1
+                            )}%`}
+                          >
+                            <div
+                              style={{
+                                width: `${Math.max(
+                                  0,
+                                  Math.min(100, row.pct)
+                                )}%`,
+                                height: "100%",
+                                background: color,
+                                transition: "width 200ms ease",
+                              }}
+                            />
+                          </div>
+                          <span
+                            style={{
+                              ...monoFont,
+                              fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                              color: textPrimary,
+                              minWidth: 56,
+                              textAlign: "right",
+                            }}
+                          >
+                            {row.pct.toFixed(1)}%
+                          </span>
+                          <span
+                            style={{
+                              border: `1px solid ${color}`,
+                              color,
+                              background: withAlpha(color, 0.12),
+                              borderRadius: 999,
+                              padding: "2px 10px",
+                              ...monoFont,
+                              fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {label}
+                          </span>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {outageModalOpen ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 57,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              background: withAlpha(background, 0.72),
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="장애 이벤트 목록"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) closeOutageModal()
+            }}
+          >
+            <div
+              style={{
+                width: "min(980px, 100%)",
+                maxHeight: "100%",
+                overflow: "hidden",
+                borderRadius: 16,
+                background: panelBackground,
+                border: `1px solid ${borderColor}`,
+                boxShadow: `0 18px 70px ${withAlpha("#000", 0.55)}`,
+                display: "flex",
+                flexDirection: "column",
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  padding: 14,
+                  borderBottom: `1px solid ${borderColor}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{
+                    ...headingFont,
+                    fontSize: coerceFontSize(headingFont?.fontSize, 18),
+                    color: textPrimary,
+                  }}
+                >
+                  장애 이벤트 목록 ({outageEventRows.length})
+                </div>
+                <button
+                  type="button"
+                  onClick={closeOutageModal}
+                  style={{
+                    border: `1px solid ${borderColor}`,
+                    background: cardBackground,
+                    color: textPrimary,
+                    borderRadius: 12,
+                    padding: "8px 10px",
+                    cursor: "pointer",
+                    ...monoFont,
+                    fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                  }}
+                >
+                  닫기
+                </button>
+              </div>
+
+              <div style={{ padding: 14, overflow: "auto" }}>
+                <div
+                  role="table"
+                  aria-label="Device outage events"
+                  style={{
+                    width: "100%",
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    border: `1px solid ${borderColor}`,
+                    background: panelBackground,
+                  }}
+                >
+                  <div
+                    role="row"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1.1fr 0.9fr 1fr 0.9fr 1.5fr",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderBottom: `1px solid ${borderColor}`,
+                      color: textSecondary,
+                      ...monoFont,
+                      fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                    }}
+                  >
+                    <span role="columnheader">Device</span>
+                    <span role="columnheader">Map</span>
+                    <span role="columnheader">Event</span>
+                    <span role="columnheader">Severity</span>
+                    <span role="columnheader">Timestamp</span>
+                  </div>
+                  <div role="rowgroup" style={{ maxHeight: 420, overflow: "auto" }}>
+                    {outageEventRows.length === 0 ? (
+                      <div
+                        style={{
+                          padding: 14,
+                          color: textSecondary,
+                          ...bodyFont,
+                          fontSize: coerceFontSize(bodyFont?.fontSize, 14),
+                        }}
+                      >
+                        이벤트 데이터가 없습니다.
+                      </div>
+                    ) : (
+                      outageEventRows.map((row) => {
+                        const sev = row.severity.toUpperCase()
+                        const sevColor =
+                          sev === "CRITICAL" || sev === "ERROR"
+                            ? statusError
+                            : sev === "WARN" || sev === "WARNING"
+                              ? statusWarning
+                              : textSecondary
+                        return (
+                          <button
+                            key={`outage-${row.deviceId}-${row.ts}-${row.eventType}`}
+                            type="button"
+                            onClick={() => {
+                              onSelect(row.deviceId)
+                              closeOutageModal()
+                            }}
+                            style={{
+                              width: "100%",
+                              border: "none",
+                              background: cardBackground,
+                              cursor: "pointer",
+                              textAlign: "left",
+                              padding: 0,
+                            }}
+                          >
+                            <div
+                              role="row"
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "1.1fr 0.9fr 1fr 0.9fr 1.5fr",
+                                gap: 10,
+                                padding: "10px 12px",
+                                borderBottom: `1px solid ${borderColor}`,
+                              }}
+                            >
+                              <span role="cell" style={{ ...monoFont, color: textPrimary }}>
+                                {row.deviceId}
+                              </span>
+                              <span role="cell" style={{ ...monoFont, color: textSecondary }}>
+                                {row.mapLabel}
+                              </span>
+                              <span role="cell" style={{ ...monoFont, color: textPrimary }}>
+                                {row.eventType}
+                              </span>
+                              <span role="cell" style={{ ...monoFont, color: sevColor }}>
+                                {row.severity}
+                              </span>
+                              <span role="cell" style={{ ...monoFont, color: textSecondary }}>
+                                {row.ts || "-"}
+                              </span>
+                            </div>
+                          </button>
+                        )
+                      })
+                    )}
                   </div>
                 </div>
               </div>

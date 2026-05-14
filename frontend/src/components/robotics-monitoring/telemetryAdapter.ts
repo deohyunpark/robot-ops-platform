@@ -49,6 +49,20 @@ export type BackendDeviceEvent = {
   createdAt?: string | null
 }
 
+export type BackendThroughputPoint = {
+  time: string
+  count: number
+}
+
+export type BackendThroughputResponse = {
+  current15MinCount: number
+  hourlyRate: number
+  todayCount: number
+  changeRate: number
+  bucketTime: { start: string; end: string }
+  chart: BackendThroughputPoint[]
+}
+
 function toStatus(t: BackendDeviceTelemetry): DeviceStatus {
   const online = t.state?.online ?? false
   const battery = normalizeBatteryPct(firstDefined(t.state?.batteryPct, t.batteryPct))
@@ -152,6 +166,82 @@ export function eventBatchFromPayload(input: unknown): BackendDeviceEvent[] {
 
 export function resolveEventDeviceId(ev: BackendDeviceEvent): string {
   return ev.deviceId ?? ev.robotId ?? ev.payload?.robotId ?? ""
+}
+
+export function throughputFromPayload(input: unknown): BackendThroughputResponse | null {
+  if (typeof input === "string") {
+    try {
+      return throughputFromPayload(JSON.parse(input))
+    } catch {
+      return null
+    }
+  }
+  const one = normalizeThroughputFrame(input)
+  return one
+}
+
+function normalizeThroughputFrame(input: unknown): BackendThroughputResponse | null {
+  if (!input || typeof input !== "object") return null
+  const obj = input as Record<string, unknown>
+
+  const fromPayload =
+    obj.payload && typeof obj.payload === "object"
+      ? (obj.payload as Record<string, unknown>)
+      : null
+
+  const source = hasThroughputShape(fromPayload) ? fromPayload : hasThroughputShape(obj) ? obj : null
+  if (!source) return null
+
+  const rawChart = source.chart
+  const chart: BackendThroughputPoint[] = Array.isArray(rawChart)
+    ? rawChart
+        .map((item) => {
+          if (!item || typeof item !== "object") return null
+          const p = item as Record<string, unknown>
+          const time = typeof p.time === "string" ? p.time : ""
+          const count = toNum(p.count, Number.NaN)
+          if (!time || !Number.isFinite(count)) return null
+          return {
+            time,
+            count: Math.round(count),
+          }
+        })
+        .filter((x): x is BackendThroughputPoint => !!x)
+    : []
+
+  const bucketTime = normalizeBucketTime(source.bucketTime)
+  if (!bucketTime) return null
+
+  return {
+    current15MinCount: Math.round(toNum(source.current15MinCount, 0)),
+    hourlyRate: Math.round(toNum(source.hourlyRate, 0)),
+    todayCount: Math.round(toNum(source.todayCount, 0)),
+    changeRate: toNum(source.changeRate, 0),
+    bucketTime,
+    chart,
+  }
+}
+
+function hasThroughputShape(input: unknown): input is Record<string, unknown> {
+  if (!input || typeof input !== "object") return false
+  const obj = input as Record<string, unknown>
+  return (
+    obj.current15MinCount !== undefined ||
+    obj.hourlyRate !== undefined ||
+    obj.todayCount !== undefined ||
+    Array.isArray(obj.chart)
+  )
+}
+
+function normalizeBucketTime(
+  raw: unknown
+): { start: string; end: string } | null {
+  if (!raw || typeof raw !== "object") return null
+  const obj = raw as Record<string, unknown>
+  const start = typeof obj.start === "string" ? obj.start : ""
+  const end = typeof obj.end === "string" ? obj.end : ""
+  if (!start || !end) return null
+  return { start, end }
 }
 
 function normalizeFrame(input: unknown): BackendDeviceTelemetry | null {

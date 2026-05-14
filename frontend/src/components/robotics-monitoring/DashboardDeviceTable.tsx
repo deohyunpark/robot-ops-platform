@@ -116,12 +116,12 @@ export function useDeviceTableRenderer(args: {
                 const eventText = d.lastEventType?.trim() || "-"
                 const severity = (d.lastEventSeverity ?? "").toUpperCase()
                 const eventColor =
-                  severity === "CRITICAL"
-                    ? "#FF4D6D"
-                    : severity === "WARNING"
-                      ? "#FFB020"
+                  severity === "CRITICAL" || severity === "ERROR"
+                    ? "#EF4444"
+                    : severity === "WARN" || severity === "WARNING"
+                      ? "#F59E0B"
                       : severity === "INFO"
-                        ? "#60A5FA"
+                        ? "#3B82F6"
                         : textSecondary
                 const batteryBad = d.battery <= lowBatteryThreshold
                 const tempBad = d.temperature >= abnormalTempThreshold

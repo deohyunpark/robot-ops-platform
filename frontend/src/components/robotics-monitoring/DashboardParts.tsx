@@ -103,20 +103,22 @@ export function KPI(props: {
         >
           {value}
         </div>
-        <div
-          style={{
-            ...titleFont,
-            fontSize: coerceFontSize(titleFont?.fontSize, 12),
-            lineHeight: titleFont?.lineHeight ?? "1.2em",
-            letterSpacing: titleFont?.letterSpacing ?? "-0.01em",
-            color: textSecondary,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {hint}
-        </div>
+        {hint.trim() ? (
+          <div
+            style={{
+              ...titleFont,
+              fontSize: coerceFontSize(titleFont?.fontSize, 12),
+              lineHeight: titleFont?.lineHeight ?? "1.2em",
+              letterSpacing: titleFont?.letterSpacing ?? "-0.01em",
+              color: textSecondary,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {hint}
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -427,8 +429,10 @@ export function Sparkline(props: {
   stroke: string
   fill: string
   grid: string
+  referenceValue?: number
+  referenceColor?: string
 }) {
-  const { values, stroke, fill, grid } = props
+  const { values, stroke, fill, grid, referenceValue, referenceColor } = props
   const w = 600
   const h = 120
   const pad = 8
@@ -448,6 +452,10 @@ export function Sparkline(props: {
   const area = points
     ? `M ${points} L ${w - pad},${h - pad} L ${pad},${h - pad} Z`
     : ""
+  const refY =
+    typeof referenceValue === "number"
+      ? clamp(pad + (1 - (referenceValue - min) / span) * (h - pad * 2), pad, h - pad)
+      : null
 
   return (
     <svg
@@ -470,6 +478,15 @@ export function Sparkline(props: {
         strokeWidth={1}
         fill="none"
       />
+      {refY !== null ? (
+        <path
+          d={`M ${pad},${refY} H ${w - pad}`}
+          stroke={referenceColor ?? withAlpha(stroke, 0.7)}
+          strokeWidth={1.25}
+          strokeDasharray="5 4"
+          fill="none"
+        />
+      ) : null}
       {area ? <path d={area} fill={fill} stroke="none" /> : null}
       {points ? (
         <polyline

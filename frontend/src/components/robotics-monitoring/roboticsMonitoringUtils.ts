@@ -59,15 +59,62 @@ export function formatBattery(v: number) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)
 }
 
+function parseTimestampWithKoreanFallback(raw?: string): number {
+  if (!raw) return Number.NaN
+  const normalized = raw.trim()
+  const normalizedIso = normalized
+    // "YYYY-MM-DDTHH:mmZ" -> "YYYY-MM-DDTHH:mm:00Z"
+    .replace(
+      /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(Z|[+-]\d{2}:?\d{2})$/,
+      "$1:00$2"
+    )
+    // "YYYY-MM-DDTHH:mm" -> "YYYY-MM-DDTHH:mm:00"
+    .replace(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/, "$1:00")
+  let t = Date.parse(normalizedIso)
+  if (Number.isNaN(t)) {
+    // Fallback for "YYYY-MM-DD HH:mm:ss" style timestamps.
+    const m = normalized.match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+    )
+    if (m) {
+      const year = Number(m[1])
+      const month = Number(m[2]) - 1
+      const day = Number(m[3])
+      const hour = Number(m[4])
+      const minute = Number(m[5])
+      const second = Number(m[6] ?? "0")
+      // When timezone is omitted, backend usually sends Korea local time.
+      // Convert "KST wall clock" to UTC epoch first, then render as Asia/Seoul.
+      t = Date.UTC(year, month, day, hour - 9, minute, second)
+    }
+  }
+  return t
+}
+
+export function parseKoreanTimestampMs(raw?: string): number {
+  return parseTimestampWithKoreanFallback(raw)
+}
+
 export function formatKoreanDateTime(iso?: string) {
-  if (!iso) return "-"
-  const t = Date.parse(iso)
+  const t = parseTimestampWithKoreanFallback(iso)
   if (Number.isNaN(t)) return "-"
   return new Date(t).toLocaleString("ko-KR", {
     timeZone: "Asia/Seoul",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+}
+
+export function formatKoreanTime(iso?: string) {
+  const t = parseTimestampWithKoreanFallback(iso)
+  if (Number.isNaN(t)) return "-"
+  return new Date(t).toLocaleTimeString("ko-KR", {
+    timeZone: "Asia/Seoul",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
