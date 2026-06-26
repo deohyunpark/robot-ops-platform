@@ -1,4 +1,4 @@
-package com.example.robotops.domain.service.eventrule;
+package com.example.robotops.domain.service.event;
 
 import java.util.List;
 import lombok.Builder;

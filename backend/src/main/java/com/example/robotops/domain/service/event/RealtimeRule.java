@@ -1,4 +1,4 @@
-package com.example.robotops.domain.service.eventrule;
+package com.example.robotops.domain.service.event;
 
 import com.example.robotops.domain.deviceStateType.Mission;
 import com.example.robotops.global.errorMessage.StringEnum;
@@ -24,7 +24,7 @@ public class RealtimeRule {
     }
 
     public boolean overheat(EventContext c) {
-        return c.temp() != null && c.temp() >= 80;
+        return c.temp() != null && c.temp() >= 70;
     }
 
     public boolean lowBattery(EventContext c) {

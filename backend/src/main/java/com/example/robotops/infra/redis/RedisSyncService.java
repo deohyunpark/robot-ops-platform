@@ -4,7 +4,7 @@ import com.example.robotops.application.telemetry.request.payload.TelemetryPaylo
 import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.response.eventpayload.PayloadField;
-import com.example.robotops.domain.service.eventrule.EventContext;
+import com.example.robotops.domain.service.event.EventContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 

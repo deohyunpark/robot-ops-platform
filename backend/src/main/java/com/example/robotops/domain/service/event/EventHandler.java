@@ -1,18 +1,18 @@
-package com.example.robotops.domain.service.eventrule;
+package com.example.robotops.domain.service.event;
 
 import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.deviceStateType.Severity;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.response.eventpayload.PayloadType;
-import java.util.Optional;
+import com.example.robotops.domain.service.RuleHandler;
 import java.util.function.Function;
 
-public class EventHandler {
+public class EventHandler extends RuleHandler<DeviceEvent>{
 
-    private final Function<EventContext, Boolean> rule;
     private final EventType eventType;
     private final Severity severity;
     private final PayloadType payloadType;
+
 
     public EventHandler(
             Function<EventContext, Boolean> rule,
@@ -20,24 +20,23 @@ public class EventHandler {
             Severity severity,
             PayloadType payloadType
     ) {
-        this.rule = rule;
+        super(rule);
         this.eventType = eventType;
         this.severity = severity;
         this.payloadType = payloadType;
     }
 
     // todo : 컬럼 추가 : current event
-    public Optional<DeviceEvent> evaluate(EventContext ctx) {
-        if (rule.apply(ctx)) {
-            return Optional.of(
-                    DeviceEvent.of(
-                            ctx.tp().robotId(),
-                            eventType,
-                            severity,
-                            payloadType.toMap(ctx.tp())
-                    )
-            );
-        }
-        return Optional.empty();
+    @Override
+    public DeviceEvent create(EventContext ctx) {
+        return
+                DeviceEvent.of(
+                        ctx.tp().robotId(),
+                        eventType,
+                        severity,
+                        payloadType.toMap(ctx.tp())
+
+        );
     }
+
 }
