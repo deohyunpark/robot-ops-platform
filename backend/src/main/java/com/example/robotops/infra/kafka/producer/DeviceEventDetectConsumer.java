@@ -21,4 +21,5 @@ public class DeviceEventDetectConsumer {
     public void consume(String message) {
         deviceEventService.process(jsonUtil.fromJson(message, DeviceEvent.class));
     }
+
 }

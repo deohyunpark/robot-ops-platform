@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class OfflineDetectorScheduler {
 
-    private static final long TIMEOUT = 10 * 1000; // 10초
+    private static final long TIMEOUT = 60 * 1000 * 5; // 5분
     private final RedisService redisService;
     private final KafkaProducer kafkaProducer;
 
@@ -55,12 +55,12 @@ public class OfflineDetectorScheduler {
                     Map.of("lastSeen", lastSeen,
                             "now", now));
 
-
             boolean success = kafkaProducer.sendDeviceEvent(deviceEvent);
 
             // 3. 중복 방지
             if (success) {
                 redisService.deleteOfflineDevice(deviceId);
+                kafkaProducer.sendOfflineList(deviceId);
             }
         }
     }

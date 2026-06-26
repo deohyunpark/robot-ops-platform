@@ -1,6 +1,7 @@
 package com.example.robotops.domain.entity;
 
 import com.example.robotops.domain.deviceStateType.EventType;
+import com.example.robotops.domain.deviceStateType.Mission;
 import com.example.robotops.domain.deviceStateType.Severity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -43,6 +44,10 @@ public class DeviceEvent {
     @Enumerated(EnumType.STRING)
     @Column(name = "severity", nullable = false)
     private Severity severity;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "current_mission", nullable = false)
+    private Mission currentMission;
 
     @Column(columnDefinition = "jsonb")
     @JdbcTypeCode(SqlTypes.JSON)

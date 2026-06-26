@@ -85,4 +85,25 @@ public class KafkaProducer {
                 deviceId
         );
     }
+
+    public void sendTotalUtilization(String deviceId) {
+        template.send(
+                "robot.device.utilization",
+                deviceId
+        );
+    }
+
+    public void sendAllEvents(String deviceId) {
+        template.send(
+                "robot.device.events",
+                deviceId
+        );
+    }
+
+    public void sendOfflineList(String deviceId) {
+        template.send(
+                "robot.device.offline",
+                deviceId
+        );
+    }
 }

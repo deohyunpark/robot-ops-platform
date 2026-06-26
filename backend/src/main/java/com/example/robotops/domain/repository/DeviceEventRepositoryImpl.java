@@ -19,17 +19,21 @@ public class DeviceEventRepositoryImpl implements DeviceEventRepositoryCustom {
             event_type,
             severity,
             payload,
-            created_at
+            created_at,
+            current_mission,
         )
         VALUES (
             :deviceId,
             :eventType,
             :severity,
             :payload::jsonb,
-            now()
+            now(),
+            :
         )
     """;
     private final NamedParameterJdbcTemplate jdbcTemplate;
+
+    // todo : 컬럼 추가 : current event
 
     @Override
     public void batchInsert(List<DeviceEvent> deviceEvents) {

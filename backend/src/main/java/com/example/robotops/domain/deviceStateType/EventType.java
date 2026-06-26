@@ -1,6 +1,8 @@
 package com.example.robotops.domain.deviceStateType;
 
-public enum EventType {
+import com.example.robotops.global.errorMessage.StringEnum;
+
+public enum EventType implements StringEnum {
 
     OFFLINE,
     ONLINE,

@@ -3,6 +3,7 @@ package com.example.robotops.domain.service;
 import com.example.robotops.domain.repository.DeviceStateRepository;
 import com.example.robotops.domain.response.ThroughputPoint;
 import com.example.robotops.domain.response.ThroughputResponse;
+import com.example.robotops.domain.response.TotalUtilizationResponse;
 import com.example.robotops.domain.response.UtilizationResponse;
 import com.example.robotops.infra.redis.RedisService;
 import java.time.OffsetDateTime;
@@ -18,6 +19,17 @@ public class DashBoardService {
 
     private final RedisService redisService;
     private final DeviceStateRepository deviceStateRepository;
+
+    private static long parseLongOrZero(String raw) {
+        if (raw == null || raw.isBlank() || "null".equalsIgnoreCase(raw)) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
 
     public ThroughputResponse getThroughput() {
 
@@ -83,14 +95,29 @@ public class DashBoardService {
 
         List<String> deviceIdList = deviceStateRepository.findAllDeviceId();
 
-        // Todo: time match check
         long currentBucketStart = redisService.currentBucketStart().toInstant().toEpochMilli();
 
         return deviceIdList.stream().map(
-                deviceId ->
-                        UtilizationResponse.from(deviceId,
-                                currentBucketStart,
-                                redisService.getUtilizationValue(deviceId))
+                deviceId -> {
+                    Map<String, String> utilizationValueByDevice = redisService.getUtilizationValueByDevice(deviceId);
+                    return UtilizationResponse.from(deviceId,
+                            currentBucketStart,
+                            utilizationValueByDevice);
+                }
         ).toList();
     }
+
+    public TotalUtilizationResponse getTotalUtilization() {
+
+        Map<String, String> totalUtilizationValue = redisService.getTotalUtilizationValue();
+        long totalSeconds = parseLongOrZero(totalUtilizationValue.get("totalSeconds"));
+        long activeSeconds = parseLongOrZero(totalUtilizationValue.get("activeSeconds"));
+
+        double utilization = totalSeconds == 0 ? 0 : (activeSeconds * 100.0) / totalSeconds;
+
+        return TotalUtilizationResponse.of(utilization);
+    }
+
+
+
 }

@@ -26,6 +26,7 @@ public class EventHandler {
         this.payloadType = payloadType;
     }
 
+    // todo : 컬럼 추가 : current event
     public Optional<DeviceEvent> evaluate(EventContext ctx) {
         if (rule.apply(ctx)) {
             return Optional.of(

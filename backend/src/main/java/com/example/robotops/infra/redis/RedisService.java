@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -133,10 +134,27 @@ public class RedisService {
                 event.getEventType().name()
         );
 
+        // 이벤트 리스트 저장
+        String allDeviceKey = RedisKey.ALL_DEVICE_EVENT.key();
+        String allDeviceValue = event.getDeviceId() + ":" + event.getEventType().name();
+
+        stringRedisTemplate.opsForZSet().add(allDeviceKey, allDeviceValue, OffsetDateTime.now().toInstant().toEpochMilli());
+
         Boolean success = stringRedisTemplate.opsForValue()
-                .setIfAbsent(key, "1", Duration.ofMinutes(5));
+                .setIfAbsent(key, "1");
 
         return Boolean.TRUE.equals(success);
+    }
+
+    public Set<TypedTuple<String>> getAllEvents() {
+        String allDeviceKey = RedisKey.ALL_DEVICE_EVENT.key();
+
+        return stringRedisTemplate.opsForZSet()
+                .reverseRangeWithScores(
+                        allDeviceKey,
+                        0,
+                        -1
+                );
     }
 
     public void countDone15Minutes() {
@@ -224,6 +242,16 @@ public class RedisService {
                 currentBucketStart().toInstant().toEpochMilli();
     }
 
+    public String current15MinBucketKeyByAllDevice() {
+        return RedisKey.UTILIZATION.key() + ":" + currentBucketStart().toInstant().toEpochMilli();
+    }
+
+    public void updateAllDevicesUtilization(String hashKey, long duration) {
+        String key = current15MinBucketKeyByAllDevice();
+
+        stringRedisTemplate.opsForHash().increment(key, hashKey, duration);
+    }
+
     public void updateMissionTime(String deviceId, String mission, String startedAt) {
         String key = "utilization:" + deviceId;
 
@@ -243,9 +271,19 @@ public class RedisService {
         stringRedisTemplate.opsForHash().increment(key, hashKey, duration);
     }
 
-    public Map<String, String> getUtilizationValue(String deviceId) {
+    public Map<String, String> getUtilizationValueByDevice(String deviceId) {
         String key = current15MinBucketKeyByDeviceId(deviceId);
 
+        return getHashValue(key);
+    }
+
+    public Map<String, String> getTotalUtilizationValue() {
+        String key = current15MinBucketKeyByAllDevice();
+
+        return getHashValue(key);
+    }
+
+    public Map<String, String> getHashValue(String key) {
         Map<Object, Object> raw =
                 stringRedisTemplate.opsForHash().entries(key);
 

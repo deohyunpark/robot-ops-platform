@@ -76,13 +76,15 @@ public class MissionService {
 
             // total 누적
             redisService.updateUtilizationBucket(deviceId, "totalSeconds", seconds);
-
+            redisService.updateAllDevicesUtilization("totalSeconds", seconds);
             // idle, charge 제외 active 누적
             if (telemetryPayload.isActive(prevMission)) {
                 redisService.updateUtilizationBucket(deviceId, "activeSeconds", seconds);
+                redisService.updateAllDevicesUtilization("activeSeconds", seconds);
             }
 
             redisService.updateMissionTime(deviceId, newMission, newStart);
+            kafkaProducer.sendTotalUtilization(deviceId);
         }
 
     }

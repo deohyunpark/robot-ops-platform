@@ -8,6 +8,8 @@ public enum RedisKey {
     DEVICE_STATE("device:%s:state"),
 
     DEVICE_EVENT("device:%s:event:%s"),
+    ALL_DEVICE_EVENT("device:events"),
+    UTILIZATION("utilization:total"),
 
     // 지표값
     METRIC("device:%s:%s"),
