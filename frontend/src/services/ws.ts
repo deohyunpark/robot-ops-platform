@@ -1,14 +1,16 @@
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8080/ws"
 const WS_TOPICS = (
   import.meta.env.VITE_WS_TOPICS ??
-  `${import.meta.env.VITE_WS_TOPIC ?? "/robot/device/state"},/robot/device/event,/robot/device/throughput`
+  `${import.meta.env.VITE_WS_TOPIC ?? "/robot/device/state"},/robot/device/event,/robot/device/events,/robot/device/throughput,/robot/device/offline,/robot/device/totalUtilization`
 )
   .split(",")
   .map((x: string) => x.trim())
   .filter(Boolean)
 const STOMP_ACCEPT_VERSION = "1.2,1.1,1.0"
 
-export function createSocket(onMessage: (data: unknown) => void) {
+export function createSocket(
+  onMessage: (data: unknown, meta?: { destination?: string }) => void
+) {
   const socket = new WebSocket(WS_URL, ["v12.stomp", "v11.stomp", "v10.stomp"])
 
   socket.onopen = () => {
@@ -46,21 +48,25 @@ export function createSocket(onMessage: (data: unknown) => void) {
         if (frame.command === "MESSAGE") {
           const body = frame.body.trim()
           if (!body) continue
+          const destination =
+            frame.headers.destination ??
+            frame.headers.Destination ??
+            ""
           try {
             const parsed = JSON.parse(body)
             // Sometimes body is JSON-stringified twice.
             if (typeof parsed === "string") {
               try {
                 const nested = JSON.parse(parsed)
-                onMessage(nested)
+                onMessage(nested, { destination })
               } catch {
-                onMessage(parsed)
+                onMessage(parsed, { destination })
               }
             } else {
-              onMessage(parsed)
+              onMessage(parsed, { destination })
             }
           } catch {
-            onMessage(body)
+            onMessage(body, { destination })
           }
           continue
         }
@@ -72,7 +78,7 @@ export function createSocket(onMessage: (data: unknown) => void) {
     // Backward compatibility: if backend still emits plain JSON.
     try {
       const data = JSON.parse(event.data)
-      onMessage(data)
+      onMessage(data, {})
     } catch {
       // Ignore non-JSON, non-STOMP payloads.
     }

@@ -168,6 +168,219 @@ export function resolveEventDeviceId(ev: BackendDeviceEvent): string {
   return ev.deviceId ?? ev.robotId ?? ev.payload?.robotId ?? ""
 }
 
+/** RedisEventResponse from /robot/device/offline (list). */
+export type RedisEventResponse = {
+  deviceId: string
+  eventName: string
+  /** Java OffsetDateTime → JSON (usually ISO-8601 string). */
+  createAt?: string
+}
+
+function normalizeRedisEventRecord(
+  raw: Record<string, unknown>
+): RedisEventResponse | null {
+  const deviceId =
+    (typeof raw.deviceId === "string" && raw.deviceId.trim()) ||
+    (typeof raw.device_id === "string" && raw.device_id.trim()) ||
+    (typeof raw.robotId === "string" && raw.robotId.trim()) ||
+    ""
+  const eventNameRaw =
+    (typeof raw.eventName === "string" && raw.eventName.trim()) ||
+    (typeof raw.event_name === "string" && raw.event_name.trim()) ||
+    ""
+  if (!deviceId || !eventNameRaw) return null
+  const createAtRaw =
+    (typeof raw.createAt === "string" && raw.createAt.trim()) ||
+    (typeof raw.createdAt === "string" && raw.createdAt.trim()) ||
+    (typeof raw.create_at === "string" && raw.create_at.trim()) ||
+    (typeof raw.created_at === "string" && raw.created_at.trim()) ||
+    ""
+  const out: RedisEventResponse = { deviceId, eventName: eventNameRaw }
+  if (createAtRaw) out.createAt = createAtRaw
+  return out
+}
+
+function extractRedisEventList(payload: unknown): RedisEventResponse[] {
+  if (typeof payload === "string") {
+    try {
+      return extractRedisEventList(JSON.parse(payload))
+    } catch {
+      return []
+    }
+  }
+  if (Array.isArray(payload)) {
+    return payload
+      .map((v) =>
+        v && typeof v === "object"
+          ? normalizeRedisEventRecord(v as Record<string, unknown>)
+          : null
+      )
+      .filter((x): x is RedisEventResponse => !!x)
+  }
+  if (!payload || typeof payload !== "object") return []
+  const obj = payload as Record<string, unknown>
+  if (Array.isArray(obj.payload)) return extractRedisEventList(obj.payload)
+  for (const c of [
+    obj.items,
+    obj.data,
+    obj.rows,
+    obj.list,
+    obj.events,
+    obj.content,
+    obj.body,
+  ]) {
+    if (Array.isArray(c)) return extractRedisEventList(c)
+  }
+  const one = normalizeRedisEventRecord(obj)
+  return one ? [one] : []
+}
+
+/** WebSocket body: RedisEventResponse[] (or wrapped array). */
+export function offlineEventBatchFromPayload(
+  input: unknown
+): RedisEventResponse[] {
+  return extractRedisEventList(input)
+}
+
+/** Row for 장애 모달 — `/robot/device/events` 등. */
+export type DeviceEventFeedRow = {
+  deviceId: string
+  eventType: string
+  severity: string
+  ts: string
+}
+
+export function mapEventTypeToSeverity(eventType: string): string {
+  const t = (eventType ?? "").trim().toUpperCase()
+  const critical = new Set([
+    "OFFLINE",
+    "COLLISION",
+    "EMERGENCY_STOP",
+    "OBSTACLE",
+    "OVERHEAT",
+    "LOW_BATTERY",
+  ])
+  const info = new Set(["IDLE", "CHARGING"])
+  const warning = new Set(["SPEED_RISING", "CPU_RISING", "TEMP_RISING"])
+  if (critical.has(t)) return "CRITICAL"
+  if (info.has(t)) return "INFO"
+  if (warning.has(t)) return "WARNING"
+  return "UNKNOWN"
+}
+
+function normalizeDeviceEventFeedRecord(
+  raw: Record<string, unknown>
+): DeviceEventFeedRow | null {
+  const deviceId =
+    (typeof raw.deviceId === "string" && raw.deviceId.trim()) ||
+    (typeof raw.device_id === "string" && raw.device_id.trim()) ||
+    (typeof raw.robotId === "string" && raw.robotId.trim()) ||
+    ""
+  const eventType =
+    (typeof raw.eventType === "string" && raw.eventType.trim()) ||
+    (typeof raw.event_type === "string" && raw.event_type.trim()) ||
+    (typeof raw.eventName === "string" && raw.eventName.trim()) ||
+    ""
+  if (!deviceId || !eventType) return null
+  const severityRaw =
+    (typeof raw.severity === "string" && raw.severity.trim()) || ""
+  const ts =
+    (typeof raw.createAt === "string" && raw.createAt.trim()) ||
+    (typeof raw.create_at === "string" && raw.create_at.trim()) ||
+    (typeof raw.ts === "string" && raw.ts.trim()) ||
+    (typeof raw.timestamp === "string" && raw.timestamp.trim()) ||
+    (typeof raw.createdAt === "string" && raw.createdAt.trim()) ||
+    ""
+  const severity =
+    severityRaw.toUpperCase() === "CRITICAL" ||
+    severityRaw.toUpperCase() === "WARNING" ||
+    severityRaw.toUpperCase() === "INFO"
+      ? severityRaw.toUpperCase()
+      : mapEventTypeToSeverity(eventType)
+  return {
+    deviceId,
+    eventType,
+    severity,
+    ts,
+  }
+}
+
+export function filterCriticalEventRows(
+  rows: DeviceEventFeedRow[]
+): DeviceEventFeedRow[] {
+  return rows.filter((r) => r.severity.toUpperCase() === "CRITICAL")
+}
+
+function extractDeviceEventFeedList(payload: unknown): DeviceEventFeedRow[] {
+  if (typeof payload === "string") {
+    try {
+      return extractDeviceEventFeedList(JSON.parse(payload))
+    } catch {
+      return []
+    }
+  }
+  if (Array.isArray(payload)) {
+    return payload
+      .map((v) =>
+        v && typeof v === "object"
+          ? normalizeDeviceEventFeedRecord(v as Record<string, unknown>)
+          : null
+      )
+      .filter((x): x is DeviceEventFeedRow => !!x)
+  }
+  if (!payload || typeof payload !== "object") return []
+  const obj = payload as Record<string, unknown>
+  if (Array.isArray(obj.payload)) return extractDeviceEventFeedList(obj.payload)
+  for (const c of [
+    obj.items,
+    obj.data,
+    obj.rows,
+    obj.list,
+    obj.events,
+    obj.content,
+    obj.body,
+  ]) {
+    if (Array.isArray(c)) return extractDeviceEventFeedList(c)
+  }
+  const one = normalizeDeviceEventFeedRecord(obj)
+  return one ? [one] : []
+}
+
+/** `/robot/device/events` STOMP body → 테이블 행 (severity는 eventType 기준). */
+export function deviceEventsFeedFromPayload(input: unknown): DeviceEventFeedRow[] {
+  return extractDeviceEventFeedList(input)
+}
+
+/** GET/WS: TotalUtilizationResponse */
+export type BackendTotalUtilizationResponse = {
+  totalUtilization: number
+}
+
+export function totalUtilizationFromPayload(input: unknown): number | null {
+  if (typeof input === "string") {
+    try {
+      return totalUtilizationFromPayload(JSON.parse(input))
+    } catch {
+      return null
+    }
+  }
+  if (!input || typeof input !== "object") return null
+  const obj = input as Record<string, unknown>
+  const fromPayload =
+    obj.payload && typeof obj.payload === "object"
+      ? (obj.payload as Record<string, unknown>)
+      : null
+  const source = fromPayload ?? obj
+  const raw = source.totalUtilization ?? source.total_utilization
+  if (raw === undefined || raw === null) return null
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw
+  if (typeof raw === "string") {
+    const n = Number(raw.replace(",", ".").trim())
+    if (Number.isFinite(n)) return n
+  }
+  return null
+}
+
 export function throughputFromPayload(input: unknown): BackendThroughputResponse | null {
   if (typeof input === "string") {
     try {

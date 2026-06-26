@@ -8,10 +8,23 @@ import {
 } from "react"
 import { createSocket } from "../../services/ws"
 import {
+  fetchDashboardAllEvents,
+  fetchDashboardCriticalOutageEvents,
+} from "../../services/dashboardAllEvents"
+import { fetchDashboardDeviceList } from "../../services/dashboardDeviceList"
+import { fetchDashboardOffline } from "../../services/dashboardOffline"
+import {
   fetchDashboardUtilization,
   type DeviceUtilization,
 } from "../../services/dashboardUtilization"
+import { EventDetailModal } from "./EventDetailModal"
 import { useDeviceTableRenderer } from "./DashboardDeviceTable"
+import {
+  defaultAckState,
+  loadEventAckMap,
+  saveEventAckMap,
+  type EventDetailAckState,
+} from "./eventDetailUtils"
 import {
   Badge,
   BatteryGauge,
@@ -26,12 +39,19 @@ import type {
   RoboticsMonitoringDashboardProps,
 } from "./roboticsMonitoringDashboardTypes"
 import {
+  deviceEventsFeedFromPayload,
   eventBatchFromPayload,
+  offlineEventBatchFromPayload,
   resolveEventDeviceId,
   telemetryBatchToDevices,
   throughputFromPayload,
+  totalUtilizationFromPayload,
 } from "./telemetryAdapter"
-import type { BackendDeviceEvent, BackendThroughputResponse } from "./telemetryAdapter"
+import type {
+  BackendDeviceEvent,
+  BackendThroughputResponse,
+  DeviceEventFeedRow,
+} from "./telemetryAdapter"
 import { useElementInView } from "./useElementInView"
 import {
   clamp,
@@ -47,6 +67,77 @@ import {
 
 const isStatic = false
 const DAISY_LOGO_SRC = "/daisy-logo.png?v=2"
+
+function outageRowSeverityRank(severity: string): number {
+  const x = severity.toUpperCase()
+  if (x === "CRITICAL" || x === "ERROR") return 0
+  if (x === "WARN" || x === "WARNING") return 1
+  if (x === "INFO") return 2
+  return 3
+}
+
+function compareOutageModalRows(
+  a: { severity: string; ts: string },
+  b: { severity: string; ts: string }
+): number {
+  const r = outageRowSeverityRank(a.severity) - outageRowSeverityRank(b.severity)
+  if (r !== 0) return r
+  return b.ts.localeCompare(a.ts)
+}
+
+function outageEventRowKey(row: DeviceEventFeedRow): string {
+  return `${row.deviceId}|${row.eventType}|${row.ts}`
+}
+
+function mergeOutageEventRows(
+  existing: DeviceEventFeedRow[],
+  incoming: DeviceEventFeedRow[]
+): DeviceEventFeedRow[] {
+  const byKey = new Map<string, DeviceEventFeedRow>()
+  for (const row of existing) byKey.set(outageEventRowKey(row), row)
+  for (const row of incoming) byKey.set(outageEventRowKey(row), row)
+  return Array.from(byKey.values()).sort(compareOutageModalRows)
+}
+
+const OUTAGE_SEVERITY_SECTION_ORDER = [
+  "CRITICAL",
+  "WARNING",
+  "INFO",
+  "UNKNOWN",
+] as const
+
+function outageSeveritySection(severity: string): (typeof OUTAGE_SEVERITY_SECTION_ORDER)[number] {
+  const x = severity.toUpperCase()
+  if (x === "CRITICAL" || x === "ERROR") return "CRITICAL"
+  if (x === "WARNING" || x === "WARN") return "WARNING"
+  if (x === "INFO") return "INFO"
+  return "UNKNOWN"
+}
+
+function isDeviceEventsStompDestination(destination?: string): boolean {
+  const d = (destination ?? "").trim()
+  return d === "/robot/device/events" || d.endsWith("/robot/device/events")
+}
+
+function isOfflineStompDestination(destination?: string): boolean {
+  const d = (destination ?? "").trim()
+  return d === "/robot/device/offline" || d.endsWith("/robot/device/offline")
+}
+
+function fleetDeviceStub(id: string, status: DeviceStatus): Device {
+  return {
+    id,
+    name: id,
+    site: "",
+    model: "",
+    status,
+    battery: 0,
+    temperature: 0,
+    lastSeenMinutes: 0,
+    emergency: false,
+    errorRate: 0,
+  }
+}
 
 export default function RoboticsMonitoringDashboard(
   incoming: Partial<RoboticsMonitoringDashboardProps> = {}
@@ -101,6 +192,23 @@ export default function RoboticsMonitoringDashboard(
   const [fleetModalOpen, setFleetModalOpen] = useState(false)
   const [onlineOfflineModalOpen, setOnlineOfflineModalOpen] = useState(false)
   const [outageModalOpen, setOutageModalOpen] = useState(false)
+  const [outageModalEventRows, setOutageModalEventRows] = useState<DeviceEventFeedRow[]>(
+    []
+  )
+  const [outageModalLoading, setOutageModalLoading] = useState(false)
+  const [outageModalError, setOutageModalError] = useState<string | null>(null)
+  const [outageSeverityTab, setOutageSeverityTab] = useState<
+    (typeof OUTAGE_SEVERITY_SECTION_ORDER)[number]
+  >("CRITICAL")
+  const [eventDetailOpen, setEventDetailOpen] = useState(false)
+  const [selectedOutageEvent, setSelectedOutageEvent] = useState<DeviceEventFeedRow | null>(
+    null
+  )
+  const [eventAckByKey, setEventAckByKey] = useState<Record<string, EventDetailAckState>>(
+    () => loadEventAckMap()
+  )
+  const outageModalOpenRef = useRef(false)
+  const eventDetailOpenRef = useRef(false)
   const [throughputModalOpen, setThroughputModalOpen] = useState(false)
   const [uptimeModalOpen, setUptimeModalOpen] = useState(false)
   const [uptimeFilter, setUptimeFilter] = useState<
@@ -109,6 +217,22 @@ export default function RoboticsMonitoringDashboard(
   const [utilizationDevices, setUtilizationDevices] = useState<DeviceUtilization[]>([])
   const [utilizationLoading, setUtilizationLoading] = useState(false)
   const [utilizationError, setUtilizationError] = useState<string | null>(null)
+  /** GET /v1/dashboard/device-list — 총 장비 KPI 및 플릿 모달 ID 목록 */
+  const [dashboardDeviceIds, setDashboardDeviceIds] = useState<string[]>([])
+  const [dashboardDeviceListReady, setDashboardDeviceListReady] = useState(false)
+  const [dashboardDeviceListLoading, setDashboardDeviceListLoading] = useState(true)
+  const [dashboardDeviceListError, setDashboardDeviceListError] = useState<
+    string | null
+  >(null)
+  /** device-list + offline 초기 로드 완료 — 온라인/오프라인 KPI 표시 전 */
+  const [dashboardOfflineBootstrapped, setDashboardOfflineBootstrapped] =
+    useState(false)
+  /** GET /v1/dashboard/all-events — CRITICAL만 장애 KPI·모달 초기값 */
+  const [dashboardCriticalOutageRows, setDashboardCriticalOutageRows] = useState<
+    DeviceEventFeedRow[]
+  >([])
+  const [dashboardAllEventsBootstrapped, setDashboardAllEventsBootstrapped] =
+    useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatInput, setChatInput] = useState("")
   const [rightTab, setRightTab] = useState<"fleetMap" | "insights" | "chat">("fleetMap")
@@ -142,14 +266,63 @@ export default function RoboticsMonitoringDashboard(
   const [liveDevices, setLiveDevices] = useState<Device[] | null>(null)
   const [deviceEvents, setDeviceEvents] = useState<Record<string, BackendDeviceEvent[]>>({})
   const [throughputData, setThroughputData] = useState<BackendThroughputResponse | null>(null)
+  /** /robot/device/totalUtilization — TotalUtilizationResponse.totalUtilization */
+  const [wsTotalUtilization, setWsTotalUtilization] = useState<number | null>(null)
+  /** deviceId 누적 — /robot/device/offline 웹소켓 수신 시마다 병합 */
+  const [wsOfflineDeviceIds, setWsOfflineDeviceIds] = useState<string[]>([])
   const [wsConnected, setWsConnected] = useState(false)
   const [lastWsMessageAt, setLastWsMessageAt] = useState<string>("")
   const socketRef = useRef<WebSocket | null>(null)
   const fleetHoverCloseTimerRef = useRef<number | null>(null)
   const deviceSource = useMemo(() => liveDevices ?? [], [liveDevices])
 
+  const applyOfflineDeviceIds = useCallback(
+    (ids: Iterable<string>, mode: "merge" | "replace" = "merge") => {
+      const offlineIds = new Set<string>()
+      for (const id of ids) {
+        if (typeof id === "string" && id.trim()) offlineIds.add(id.trim())
+      }
+      if (mode === "merge" && offlineIds.size === 0) return
+
+      startTransition(() => {
+        setWsOfflineDeviceIds((prev) => {
+          const s =
+            mode === "replace" ? offlineIds : new Set([...prev, ...offlineIds])
+          return Array.from(s).sort((a, b) => a.localeCompare(b))
+        })
+        setLiveDevices((prev) => {
+          const base = prev ?? []
+          if (!base.length) return base
+          const byId = new Map(base.map((d) => [d.id, d]))
+          const now = new Date().toISOString()
+          for (const id of offlineIds) {
+            const old = byId.get(id)
+            if (!old) continue
+            byId.set(id, {
+              ...old,
+              status: "Offline",
+              lastSeenMinutes: Math.max(old.lastSeenMinutes ?? 0, 1),
+              lastSeenAt: now,
+              updatedAt: now,
+            })
+          }
+          return Array.from(byId.values())
+        })
+      })
+    },
+    []
+  )
+
   useEffect(() => {
-    const socket = createSocket((payload) => {
+    outageModalOpenRef.current = outageModalOpen
+  }, [outageModalOpen])
+
+  useEffect(() => {
+    eventDetailOpenRef.current = eventDetailOpen
+  }, [eventDetailOpen])
+
+  useEffect(() => {
+    const socket = createSocket((payload, meta) => {
       setLastWsMessageAt(new Date().toISOString())
 
       const mapped = telemetryBatchToDevices(payload)
@@ -202,9 +375,57 @@ export default function RoboticsMonitoringDashboard(
         )
       }
 
+      if (
+        isDeviceEventsStompDestination(meta?.destination) &&
+        (outageModalOpenRef.current || eventDetailOpenRef.current)
+      ) {
+        const feedRows = deviceEventsFeedFromPayload(payload)
+        if (feedRows.length) {
+          if (outageModalOpenRef.current) {
+            startTransition(() =>
+              setOutageModalEventRows((prev) => mergeOutageEventRows(prev, feedRows))
+            )
+          }
+          if (eventDetailOpenRef.current) {
+            startTransition(() =>
+              setDeviceEvents((prev) => {
+                const next = { ...prev }
+                for (const row of feedRows) {
+                  const list = next[row.deviceId] ?? []
+                  const pseudo: BackendDeviceEvent = {
+                    id: null,
+                    deviceId: row.deviceId,
+                    eventType: row.eventType,
+                    severity: row.severity,
+                    createdAt: row.ts,
+                  }
+                  next[row.deviceId] = [...list, pseudo].slice(-30)
+                }
+                return next
+              })
+            )
+          }
+        }
+      }
+
       const throughput = throughputFromPayload(payload)
       if (throughput) {
         startTransition(() => setThroughputData(throughput))
+      }
+
+      const totalUtil = totalUtilizationFromPayload(payload)
+      if (totalUtil !== null) {
+        startTransition(() => setWsTotalUtilization(totalUtil))
+      }
+
+      if (isOfflineStompDestination(meta?.destination)) {
+        const offlineEvents = offlineEventBatchFromPayload(payload)
+        if (offlineEvents.length) {
+          applyOfflineDeviceIds(
+            offlineEvents.map((e) => e.deviceId),
+            "merge"
+          )
+        }
       }
     })
     socketRef.current = socket
@@ -257,6 +478,23 @@ export default function RoboticsMonitoringDashboard(
       kpiAvgBattery: ko ? "고온 장비 수" : "Hot Devices",
       kpiAvgTemp: ko ? "생산량" : "Production",
       kpiErrorRate: ko ? "장애" : "Outage",
+      outageModalLoading: ko
+        ? "이벤트 목록 불러오는 중…"
+        : "Loading events…",
+      outageModalLoadError: ko
+        ? "이벤트 목록을 불러오지 못했습니다."
+        : "Could not load events.",
+      outageSeverityCritical: ko ? "치명 (CRITICAL)" : "Critical",
+      outageSeverityWarning: ko ? "경고 (WARNING)" : "Warning",
+      outageSeverityInfo: ko ? "정보 (INFO)" : "Info",
+      outageSeverityUnknown: ko ? "기타 (UNKNOWN)" : "Unknown",
+      outageColDevice: ko ? "장비" : "Device",
+      outageColEvent: ko ? "이벤트" : "Event",
+      outageColSeverity: ko ? "강도" : "Severity",
+      outageColTime: ko ? "발생시간" : "Time",
+      outageEmptyTab: ko
+        ? "해당 강도의 이벤트가 없습니다."
+        : "No events for this severity.",
       kpiEmergency: ko ? "가동률" : "Uptime",
       uptimeTitle: ko ? "기기별 가동률" : "Device Uptime",
       uptimeAll: ko ? "전체" : "All",
@@ -268,6 +506,15 @@ export default function RoboticsMonitoringDashboard(
         : "No devices to display.",
       uptimeLoading: ko ? "가동률 데이터 불러오는 중…" : "Loading utilization…",
       hintAllUnits: ko ? "등록된 전체 장비" : "All registered units",
+      fleetDeviceListLoading: ko
+        ? "장비 목록 불러오는 중…"
+        : "Loading device list…",
+      fleetDeviceListEmpty: ko
+        ? "등록된 장비 ID가 없습니다."
+        : "No device IDs in the response.",
+      fleetDeviceListApiError: ko
+        ? "장비 목록 API를 불러오지 못했습니다. 아래는 실시간 플릿 기준입니다."
+        : "Could not load device list API. Showing live fleet below.",
       hintRolling: ko ? "최근 15분" : "Rolling 15m",
       filtersLabel: ko ? "필터" : "Filters",
       filterOffline: ko ? "오프라인" : "Offline",
@@ -306,6 +553,10 @@ export default function RoboticsMonitoringDashboard(
       live: ko ? "실시간" : "Live",
       snapshot: ko ? "스냅샷" : "Snapshot",
       close: ko ? "닫기" : "Close",
+      onlineOfflineModalTitle: ko
+        ? "온라인 / 오프라인 장비 목록"
+        : "Online / offline devices",
+      onlineOfflineOfflineLabel: ko ? "오프라인 감지" : "Offline detection",
       robotId: ko ? "로봇 ID" : "Robot ID",
       model: ko ? "모델" : "Model",
       currentLocation: ko ? "현재 위치" : "Current location",
@@ -438,16 +689,15 @@ export default function RoboticsMonitoringDashboard(
 
   const kpis = useMemo(() => {
     const total = derivedDevices.length
-    const offlineEventIds = new Set<string>()
-    for (const [deviceId, list] of Object.entries(deviceEvents)) {
-      const last = list[list.length - 1]
-      if (!last) continue
-      if ((last.eventType ?? "").toUpperCase().includes("OFFLINE")) {
-        offlineEventIds.add(deviceId)
-      }
-    }
-    const offline = derivedDevices.filter((d) => offlineEventIds.has(d.id)).length
-    const online = Math.max(0, total - offline)
+    const offlineSet = new Set(wsOfflineDeviceIds)
+    const offlineInFleet = derivedDevices.filter((d) =>
+      offlineSet.has(d.id)
+    ).length
+    const wsOnlyOffline = wsOfflineDeviceIds.filter(
+      (id) => !derivedDevices.some((d) => d.id === id)
+    ).length
+    const offline = offlineInFleet + wsOnlyOffline
+    const online = Math.max(0, total - offlineInFleet)
     const warning = derivedDevices.filter(
       (d) => d.status === "Warning"
     ).length
@@ -487,7 +737,18 @@ export default function RoboticsMonitoringDashboard(
       hotDevices,
       production,
     }
-  }, [abnormalTempThreshold, derivedDevices, deviceEvents])
+  }, [abnormalTempThreshold, derivedDevices, wsOfflineDeviceIds])
+
+  const kpiTotalDevicesDisplay = useMemo(() => {
+    if (dashboardDeviceListLoading) return "…"
+    if (dashboardDeviceListReady) return String(dashboardDeviceIds.length)
+    return String(kpis.total)
+  }, [
+    dashboardDeviceListLoading,
+    dashboardDeviceListReady,
+    dashboardDeviceIds.length,
+    kpis.total,
+  ])
 
   const activeSummary = useMemo(() => {
     const total = derivedDevices.length
@@ -670,6 +931,68 @@ export default function RoboticsMonitoringDashboard(
     })
   }, [])
 
+  const eventDetailDevice = useMemo(() => {
+    if (!selectedOutageEvent) return null
+    const live = derivedDevices.find((d) => d.id === selectedOutageEvent.deviceId)
+    if (live) return live
+    const offline = wsOfflineDeviceIds.includes(selectedOutageEvent.deviceId)
+    return fleetDeviceStub(
+      selectedOutageEvent.deviceId,
+      offline ? "Offline" : "Online"
+    )
+  }, [selectedOutageEvent, derivedDevices, wsOfflineDeviceIds])
+
+  const selectedEventAck = useMemo(() => {
+    if (!selectedOutageEvent) return defaultAckState()
+    const key = outageEventRowKey(selectedOutageEvent)
+    return eventAckByKey[key] ?? defaultAckState()
+  }, [selectedOutageEvent, eventAckByKey])
+
+  const handleEventAck = useCallback(
+    (assignee: string) => {
+      if (!selectedOutageEvent) return
+      const key = outageEventRowKey(selectedOutageEvent)
+      const now = new Date().toISOString()
+      setEventAckByKey((prev) => {
+        const next = {
+          ...prev,
+          [key]: {
+            acknowledged: true,
+            assignee,
+            acknowledgedAt: now,
+            resolved: prev[key]?.resolved ?? false,
+            resolvedAt: prev[key]?.resolvedAt ?? "",
+          },
+        }
+        saveEventAckMap(next)
+        return next
+      })
+    },
+    [selectedOutageEvent]
+  )
+
+  const handleEventResolve = useCallback(() => {
+    if (!selectedOutageEvent) return
+    const key = outageEventRowKey(selectedOutageEvent)
+    const now = new Date().toISOString()
+    setEventAckByKey((prev) => {
+      const existing = prev[key] ?? defaultAckState()
+      const next = {
+        ...prev,
+        [key]: {
+          ...existing,
+          acknowledged: true,
+          acknowledgedAt: existing.acknowledgedAt || now,
+          assignee: existing.assignee || "—",
+          resolved: true,
+          resolvedAt: now,
+        },
+      }
+      saveEventAckMap(next)
+      return next
+    })
+  }, [selectedOutageEvent])
+
   const closeModal = useCallback(() => {
     startTransition(() => setModalOpen(false))
   }, [])
@@ -691,12 +1014,35 @@ export default function RoboticsMonitoringDashboard(
   }, [])
 
   const openOutageModal = useCallback(() => {
-    startTransition(() => setOutageModalOpen(true))
+    startTransition(() => {
+      setOutageSeverityTab("CRITICAL")
+      setOutageModalOpen(true)
+    })
   }, [])
 
   const closeOutageModal = useCallback(() => {
     startTransition(() => setOutageModalOpen(false))
   }, [])
+
+  const openEventDetail = useCallback((row: DeviceEventFeedRow) => {
+    startTransition(() => {
+      setSelectedOutageEvent(row)
+      setEventDetailOpen(true)
+    })
+  }, [])
+
+  const closeEventDetail = useCallback(() => {
+    startTransition(() => {
+      setEventDetailOpen(false)
+      setSelectedOutageEvent(null)
+    })
+  }, [])
+
+  const handleViewDeviceFromEvent = useCallback(() => {
+    if (!selectedOutageEvent) return
+    onSelect(selectedOutageEvent.deviceId)
+    closeEventDetail()
+  }, [selectedOutageEvent, onSelect, closeEventDetail])
 
   const openThroughputModal = useCallback(() => {
     startTransition(() => setThroughputModalOpen(true))
@@ -937,55 +1283,82 @@ export default function RoboticsMonitoringDashboard(
     }))
   }, [sortedFleetDevices])
 
+  /** 등록 장비(device-list) ∩ offline API/WS — 총 장비 KPI와 동일 집합 기준 */
+  const onlineOfflineApiCounts = useMemo(() => {
+    if (!dashboardDeviceListReady) return null
+    const offlineSet = new Set(wsOfflineDeviceIds)
+    let offline = 0
+    for (const id of dashboardDeviceIds) {
+      if (offlineSet.has(id)) offline++
+    }
+    return {
+      online: dashboardDeviceIds.length - offline,
+      offline,
+    }
+  }, [dashboardDeviceListReady, dashboardDeviceIds, wsOfflineDeviceIds])
+
   const onlineOfflineLists = useMemo(() => {
-    const offlineSet = new Set<string>()
-    for (const [deviceId, list] of Object.entries(deviceEvents)) {
-      const last = list[list.length - 1]
-      if (!last) continue
-      if ((last.eventType ?? "").toUpperCase().includes("OFFLINE")) {
-        offlineSet.add(deviceId)
-      }
+    const offlineSet = new Set(wsOfflineDeviceIds)
+    if (dashboardDeviceListReady) {
+      const byId = new Map(sortedFleetDevices.map((d) => [d.id, d]))
+      const online = dashboardDeviceIds
+        .filter((id) => !offlineSet.has(id))
+        .map((id) => byId.get(id) ?? fleetDeviceStub(id, "Online"))
+      const offline = dashboardDeviceIds
+        .filter((id) => offlineSet.has(id))
+        .map((id) => byId.get(id) ?? fleetDeviceStub(id, "Offline"))
+      return { online, offline }
     }
     return {
       online: sortedFleetDevices.filter((d) => !offlineSet.has(d.id)),
       offline: sortedFleetDevices.filter((d) => offlineSet.has(d.id)),
     }
-  }, [sortedFleetDevices, deviceEvents])
+  }, [
+    dashboardDeviceListReady,
+    dashboardDeviceIds,
+    sortedFleetDevices,
+    wsOfflineDeviceIds,
+  ])
 
-  const outageEventRows = useMemo(() => {
-    const rows: Array<{
-      deviceId: string
-      mapLabel: string
-      eventType: string
-      severity: string
-      ts: string
-    }> = []
-    for (const [deviceId, list] of Object.entries(deviceEvents)) {
-      if (!list.length) continue
-      const last = list[list.length - 1]
-      const device = derivedDevices.find((d) => d.id === deviceId)
-      rows.push({
-        deviceId,
-        mapLabel: device?.mapId ?? device?.site ?? "N/A",
-        eventType: last.eventType ?? "UNKNOWN",
-        severity: last.severity ?? "UNKNOWN",
-        ts: last.payload?.ts ?? last.createdAt ?? "",
-      })
+  /** 온라인/오프라인 KPI — (등록 총장비 − 오프라인) / 오프라인, API 로드 후 일괄 표시 */
+  const kpiOnlineOfflineValue = useMemo(() => {
+    if (dashboardDeviceListLoading || !dashboardOfflineBootstrapped) return "…"
+    if (onlineOfflineApiCounts) {
+      return `${onlineOfflineApiCounts.online} / ${onlineOfflineApiCounts.offline}`
     }
-    const sevRank = (s: string) => {
-      const x = s.toUpperCase()
-      if (x === "CRITICAL" || x === "ERROR") return 0
-      if (x === "WARN" || x === "WARNING") return 1
-      if (x === "INFO") return 2
-      return 3
+    return `${onlineOfflineLists.online.length} / ${onlineOfflineLists.offline.length}`
+  }, [
+    dashboardDeviceListLoading,
+    dashboardOfflineBootstrapped,
+    onlineOfflineApiCounts,
+    onlineOfflineLists,
+  ])
+
+  const outageModalGroups = useMemo(() => {
+    const buckets = new Map<string, DeviceEventFeedRow[]>()
+    for (const key of OUTAGE_SEVERITY_SECTION_ORDER) buckets.set(key, [])
+    for (const row of outageModalEventRows) {
+      const section = outageSeveritySection(row.severity)
+      buckets.get(section)!.push(row)
     }
-    rows.sort((a, b) => {
-      const r = sevRank(a.severity) - sevRank(b.severity)
-      if (r !== 0) return r
-      return b.ts.localeCompare(a.ts)
-    })
-    return rows
-  }, [deviceEvents, derivedDevices])
+    return OUTAGE_SEVERITY_SECTION_ORDER.map((severity) => ({
+      severity,
+      rows: (buckets.get(severity) ?? []).sort((a, b) =>
+        b.ts.localeCompare(a.ts)
+      ),
+    }))
+  }, [outageModalEventRows])
+
+  const outageModalActiveRows = useMemo(() => {
+    return (
+      outageModalGroups.find((g) => g.severity === outageSeverityTab)?.rows ?? []
+    )
+  }, [outageModalGroups, outageSeverityTab])
+
+  const kpiOutageValue = useMemo(() => {
+    if (!dashboardAllEventsBootstrapped) return "…"
+    return String(dashboardCriticalOutageRows.length)
+  }, [dashboardAllEventsBootstrapped, dashboardCriticalOutageRows.length])
 
   const throughputChartPoints = useMemo(() => {
     const sortedChart = [...(throughputData?.chart ?? [])].sort((a, b) => {
@@ -1122,15 +1495,18 @@ export default function RoboticsMonitoringDashboard(
     })
   }, [utilizationDevices])
 
+  const uptimeKpiEffectivePct =
+    wsTotalUtilization !== null ? wsTotalUtilization : utilizationKpiAverage
+
   const uptimeKpiValueStr =
-    utilizationKpiAverage === null ? "—" : `${utilizationKpiAverage.toFixed(1)}%`
+    uptimeKpiEffectivePct === null ? "—" : `${uptimeKpiEffectivePct.toFixed(1)}%`
 
   const uptimeKpiColor =
-    utilizationKpiAverage === null
+    uptimeKpiEffectivePct === null
       ? textSecondary
-      : utilizationKpiAverage >= 95
+      : uptimeKpiEffectivePct >= 95
         ? statusOnline
-        : utilizationKpiAverage >= 80
+        : uptimeKpiEffectivePct >= 80
           ? statusWarning
           : statusError
 
@@ -1220,17 +1596,119 @@ export default function RoboticsMonitoringDashboard(
   }, [uptimeModalOpen])
 
   useEffect(() => {
+    if (!outageModalOpen) return
+    const ac = new AbortController()
+    setOutageModalLoading(true)
+    setOutageModalError(null)
+    fetchDashboardAllEvents(ac.signal)
+      .then((rows) => {
+        if (ac.signal.aborted) return
+        setOutageModalEventRows([...rows].sort(compareOutageModalRows))
+        const buckets = new Map<string, number>()
+        for (const key of OUTAGE_SEVERITY_SECTION_ORDER) buckets.set(key, 0)
+        for (const row of rows) {
+          const section = outageSeveritySection(row.severity)
+          buckets.set(section, (buckets.get(section) ?? 0) + 1)
+        }
+        const firstWithData = OUTAGE_SEVERITY_SECTION_ORDER.find(
+          (s) => (buckets.get(s) ?? 0) > 0
+        )
+        if (firstWithData) setOutageSeverityTab(firstWithData)
+      })
+      .catch((e) => {
+        if (ac.signal.aborted) return
+        setOutageModalError(e instanceof Error ? e.message : String(e))
+        setOutageModalEventRows([])
+      })
+      .finally(() => {
+        if (ac.signal.aborted) return
+        setOutageModalLoading(false)
+      })
+    return () => ac.abort()
+  }, [outageModalOpen])
+
+  useEffect(() => {
+    const ac = new AbortController()
+    setDashboardDeviceListLoading(true)
+    setDashboardDeviceListError(null)
+    setDashboardOfflineBootstrapped(false)
+    setDashboardAllEventsBootstrapped(false)
+
+    Promise.all([
+      fetchDashboardDeviceList(ac.signal),
+      fetchDashboardOffline(ac.signal).catch(() => []),
+      fetchDashboardCriticalOutageEvents(ac.signal).catch(() => []),
+    ])
+      .then(([ids, offlineEvents, criticalOutageRows]) => {
+        if (ac.signal.aborted) return
+        const offlineIds = offlineEvents
+          .map((e) => e.deviceId)
+          .filter((id): id is string => Boolean(id))
+        startTransition(() => {
+          setDashboardDeviceIds(ids)
+          setDashboardDeviceListReady(true)
+          setDashboardDeviceListLoading(false)
+          setDashboardDeviceListError(null)
+          const offlineSet = new Set(offlineIds)
+          setWsOfflineDeviceIds(
+            Array.from(offlineSet).sort((a, b) => a.localeCompare(b))
+          )
+          setDashboardOfflineBootstrapped(true)
+          setDashboardCriticalOutageRows(criticalOutageRows)
+          setDashboardAllEventsBootstrapped(true)
+          setLiveDevices((prev) => {
+            const base = prev ?? []
+            if (!base.length) return base
+            const byId = new Map(base.map((d) => [d.id, d]))
+            const now = new Date().toISOString()
+            for (const id of offlineSet) {
+              const old = byId.get(id)
+              if (!old) continue
+              byId.set(id, {
+                ...old,
+                status: "Offline",
+                lastSeenMinutes: Math.max(old.lastSeenMinutes ?? 0, 1),
+                lastSeenAt: now,
+                updatedAt: now,
+              })
+            }
+            return Array.from(byId.values())
+          })
+        })
+      })
+      .catch((e) => {
+        if (ac.signal.aborted) return
+        setDashboardDeviceListError(
+          e instanceof Error ? e.message : String(e)
+        )
+        setDashboardDeviceIds([])
+        setDashboardDeviceListReady(false)
+        setDashboardDeviceListLoading(false)
+        setDashboardOfflineBootstrapped(true)
+        setDashboardCriticalOutageRows([])
+        setDashboardAllEventsBootstrapped(true)
+      })
+
+    return () => ac.abort()
+  }, [])
+
+  useEffect(() => {
     if (
       !modalOpen &&
       !fleetModalOpen &&
       !onlineOfflineModalOpen &&
       !outageModalOpen &&
+      !eventDetailOpen &&
       !throughputModalOpen &&
       !uptimeModalOpen
     )
       return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (eventDetailOpen) {
+          closeEventDetail()
+          return
+        }
         closeModal()
         closeFleetModal()
         closeOnlineOfflineModal()
@@ -1246,12 +1724,14 @@ export default function RoboticsMonitoringDashboard(
     fleetModalOpen,
     onlineOfflineModalOpen,
     outageModalOpen,
+    eventDetailOpen,
     throughputModalOpen,
     uptimeModalOpen,
     closeModal,
     closeFleetModal,
     closeOnlineOfflineModal,
     closeOutageModal,
+    closeEventDetail,
     closeThroughputModal,
     closeUptimeModal,
   ])
@@ -1408,7 +1888,7 @@ export default function RoboticsMonitoringDashboard(
         >
           <KPI
             title={ui.kpiTotal}
-            value={`${kpis.total}`}
+            value={kpiTotalDevicesDisplay}
             hint=""
             color={accent}
             bg={cardBackground}
@@ -1421,7 +1901,7 @@ export default function RoboticsMonitoringDashboard(
           />
           <KPI
             title={ui.kpiOnlineOffline}
-            value={`${kpis.online} / ${kpis.offline}`}
+            value={kpiOnlineOfflineValue}
             hint=""
             color={
               kpis.error > 0
@@ -1465,9 +1945,11 @@ export default function RoboticsMonitoringDashboard(
           />
           <KPI
             title={ui.kpiErrorRate}
-            value={`${outageEventRows.length} / ${kpis.total}`}
+            value={kpiOutageValue}
             hint=""
-            color={outageEventRows.length > 0 ? statusError : accent}
+            color={
+              dashboardCriticalOutageRows.length > 0 ? statusError : accent
+            }
             bg={cardBackground}
             border={borderColor}
             textPrimary={textPrimary}
@@ -3402,7 +3884,11 @@ export default function RoboticsMonitoringDashboard(
                     color: textPrimary,
                   }}
                 >
-                  등록된 전체 장비 ({sortedFleetDevices.length})
+                  등록된 전체 장비 (
+                  {dashboardDeviceListReady
+                    ? dashboardDeviceIds.length
+                    : sortedFleetDevices.length}
+                  )
                 </div>
                 <button
                   type="button"
@@ -3431,7 +3917,97 @@ export default function RoboticsMonitoringDashboard(
                   gap: 12,
                 }}
               >
-                {fleetGroupsByMap.map((group) => (
+                {dashboardDeviceListLoading ? (
+                  <div
+                    style={{
+                      padding: 12,
+                      color: textSecondary,
+                      ...bodyFont,
+                      fontSize: coerceFontSize(bodyFont?.fontSize, 14),
+                    }}
+                  >
+                    {ui.fleetDeviceListLoading}
+                  </div>
+                ) : dashboardDeviceListReady ? (
+                  dashboardDeviceIds.length === 0 ? (
+                    <div
+                      style={{
+                        padding: 12,
+                        color: textSecondary,
+                        ...bodyFont,
+                        fontSize: coerceFontSize(bodyFont?.fontSize, 14),
+                      }}
+                    >
+                      {ui.fleetDeviceListEmpty}
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                        gap: 8,
+                      }}
+                    >
+                      {dashboardDeviceIds.map((id) => (
+                        <button
+                          key={`fleet-api-${id}`}
+                          type="button"
+                          onClick={() => {
+                            onSelect(id)
+                            closeFleetModal()
+                          }}
+                          style={{
+                            textAlign: "left",
+                            borderRadius: 10,
+                            border: `1px solid ${borderColor}`,
+                            background: cardBackground,
+                            color: textPrimary,
+                            padding: "8px 10px",
+                            cursor: "pointer",
+                            ...monoFont,
+                            fontSize: coerceFontSize(monoFont?.fontSize, 13),
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {id}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <>
+                    {dashboardDeviceListError ? (
+                      <div
+                        style={{
+                          padding: 10,
+                          borderRadius: 10,
+                          border: `1px solid ${borderColor}`,
+                          background: withAlpha(cardBackground, 0.95),
+                          color: textPrimary,
+                          ...bodyFont,
+                          fontSize: coerceFontSize(bodyFont?.fontSize, 13),
+                        }}
+                      >
+                        <span style={{ color: statusWarning }}>
+                          {ui.fleetDeviceListApiError}
+                        </span>
+                        <span
+                          style={{
+                            display: "block",
+                            marginTop: 6,
+                            ...monoFont,
+                            fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                            color: textSecondary,
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {dashboardDeviceListError}
+                        </span>
+                      </div>
+                    ) : null}
+                    {fleetGroupsByMap.map((group) => (
                   <div
                     key={`fleet-group-${group.mapId}`}
                     style={{
@@ -3529,7 +4105,9 @@ export default function RoboticsMonitoringDashboard(
                       ))}
                     </div>
                   </div>
-                ))}
+                    ))}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -3551,7 +4129,7 @@ export default function RoboticsMonitoringDashboard(
             }}
             role="dialog"
             aria-modal="true"
-            aria-label="온라인 오프라인 장비 목록"
+            aria-label={ui.onlineOfflineModalTitle}
             onMouseDown={(e) => {
               if (e.target === e.currentTarget) closeOnlineOfflineModal()
             }}
@@ -3587,7 +4165,7 @@ export default function RoboticsMonitoringDashboard(
                     color: textPrimary,
                   }}
                 >
-                  온라인 / 오프라인 장비 목록
+                  {ui.onlineOfflineModalTitle}
                 </div>
                 <button
                   type="button"
@@ -3603,19 +4181,26 @@ export default function RoboticsMonitoringDashboard(
                     fontSize: coerceFontSize(monoFont?.fontSize, 12),
                   }}
                 >
-                  닫기
+                  {ui.close}
                 </button>
               </div>
 
               <div
                 style={{
                   padding: 14,
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  display: "flex",
+                  flexDirection: "column",
                   gap: 12,
                   overflow: "auto",
                 }}
               >
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                    gap: 12,
+                  }}
+                >
                 <div
                   style={{
                     borderRadius: 12,
@@ -3691,7 +4276,7 @@ export default function RoboticsMonitoringDashboard(
                     }}
                   >
                     <span style={{ ...monoFont, color: statusOffline }}>
-                      오프라인 (이벤트 기준)
+                      {ui.onlineOfflineOfflineLabel}
                     </span>
                     <span style={{ ...monoFont, color: textSecondary }}>
                       {onlineOfflineLists.offline.length}대
@@ -3729,6 +4314,8 @@ export default function RoboticsMonitoringDashboard(
                     ))}
                   </div>
                 </div>
+                </div>
+
               </div>
             </div>
           </div>
@@ -4451,7 +5038,7 @@ export default function RoboticsMonitoringDashboard(
                     color: textPrimary,
                   }}
                 >
-                  장애 이벤트 목록 ({outageEventRows.length})
+                  장애 이벤트 목록 ({outageModalEventRows.length})
                 </div>
                 <button
                   type="button"
@@ -4471,111 +5058,298 @@ export default function RoboticsMonitoringDashboard(
                 </button>
               </div>
 
-              <div style={{ padding: 14, overflow: "auto" }}>
-                <div
-                  role="table"
-                  aria-label="Device outage events"
-                  style={{
-                    width: "100%",
-                    borderRadius: 12,
-                    overflow: "hidden",
-                    border: `1px solid ${borderColor}`,
-                    background: panelBackground,
-                  }}
-                >
+              <div
+                style={{
+                  padding: 14,
+                  overflow: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                {outageModalLoading ? (
                   <div
-                    role="row"
                     style={{
-                      display: "grid",
-                      gridTemplateColumns: "1.1fr 0.9fr 1fr 0.9fr 1.5fr",
-                      gap: 10,
-                      padding: "10px 12px",
-                      borderBottom: `1px solid ${borderColor}`,
+                      padding: 14,
                       color: textSecondary,
-                      ...monoFont,
-                      fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                      ...bodyFont,
+                      fontSize: coerceFontSize(bodyFont?.fontSize, 14),
                     }}
                   >
-                    <span role="columnheader">Device</span>
-                    <span role="columnheader">Map</span>
-                    <span role="columnheader">Event</span>
-                    <span role="columnheader">Severity</span>
-                    <span role="columnheader">Timestamp</span>
+                    {ui.outageModalLoading}
                   </div>
-                  <div role="rowgroup" style={{ maxHeight: 420, overflow: "auto" }}>
-                    {outageEventRows.length === 0 ? (
-                      <div
-                        style={{
-                          padding: 14,
-                          color: textSecondary,
-                          ...bodyFont,
-                          fontSize: coerceFontSize(bodyFont?.fontSize, 14),
-                        }}
-                      >
-                        이벤트 데이터가 없습니다.
-                      </div>
-                    ) : (
-                      outageEventRows.map((row) => {
-                        const sev = row.severity.toUpperCase()
-                        const sevColor =
-                          sev === "CRITICAL" || sev === "ERROR"
-                            ? statusError
-                            : sev === "WARN" || sev === "WARNING"
-                              ? statusWarning
-                              : textSecondary
+                ) : outageModalError ? (
+                  <div
+                    style={{
+                      padding: 14,
+                      color: textPrimary,
+                      ...bodyFont,
+                      fontSize: coerceFontSize(bodyFont?.fontSize, 14),
+                    }}
+                  >
+                    <span style={{ color: statusWarning }}>
+                      {ui.outageModalLoadError}
+                    </span>
+                    <span
+                      style={{
+                        display: "block",
+                        marginTop: 6,
+                        ...monoFont,
+                        fontSize: coerceFontSize(monoFont?.fontSize, 11),
+                        color: textSecondary,
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {outageModalError}
+                    </span>
+                  </div>
+                ) : outageModalEventRows.length === 0 ? (
+                  <div
+                    style={{
+                      padding: 14,
+                      color: textSecondary,
+                      ...bodyFont,
+                      fontSize: coerceFontSize(bodyFont?.fontSize, 14),
+                    }}
+                  >
+                    이벤트 데이터가 없습니다.
+                  </div>
+                ) : (
+                  <>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {(
+                        [
+                          {
+                            key: "CRITICAL" as const,
+                            label: ui.outageSeverityCritical,
+                            color: statusError,
+                          },
+                          {
+                            key: "WARNING" as const,
+                            label: ui.outageSeverityWarning,
+                            color: statusWarning,
+                          },
+                          {
+                            key: "INFO" as const,
+                            label: ui.outageSeverityInfo,
+                            color: statusOnline,
+                          },
+                          {
+                            key: "UNKNOWN" as const,
+                            label: ui.outageSeverityUnknown,
+                            color: textSecondary,
+                          },
+                        ] as const
+                      ).map((tab) => {
+                        const count =
+                          outageModalGroups.find((g) => g.severity === tab.key)
+                            ?.rows.length ?? 0
+                        const active = outageSeverityTab === tab.key
                         return (
                           <button
-                            key={`outage-${row.deviceId}-${row.ts}-${row.eventType}`}
+                            key={tab.key}
                             type="button"
-                            onClick={() => {
-                              onSelect(row.deviceId)
-                              closeOutageModal()
-                            }}
+                            onClick={() =>
+                              startTransition(() => setOutageSeverityTab(tab.key))
+                            }
                             style={{
-                              width: "100%",
-                              border: "none",
-                              background: cardBackground,
+                              border: `1px solid ${active ? tab.color : borderColor}`,
+                              background: active
+                                ? withAlpha(tab.color, 0.18)
+                                : cardBackground,
+                              color: active ? tab.color : textPrimary,
+                              borderRadius: 999,
+                              padding: "6px 12px",
                               cursor: "pointer",
-                              textAlign: "left",
-                              padding: 0,
+                              ...monoFont,
+                              fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
                             }}
                           >
-                            <div
-                              role="row"
+                            <span
                               style={{
-                                display: "grid",
-                                gridTemplateColumns: "1.1fr 0.9fr 1fr 0.9fr 1.5fr",
-                                gap: 10,
-                                padding: "10px 12px",
-                                borderBottom: `1px solid ${borderColor}`,
+                                width: 8,
+                                height: 8,
+                                borderRadius: 999,
+                                background: tab.color,
+                                display: "inline-block",
+                                flexShrink: 0,
                               }}
-                            >
-                              <span role="cell" style={{ ...monoFont, color: textPrimary }}>
-                                {row.deviceId}
-                              </span>
-                              <span role="cell" style={{ ...monoFont, color: textSecondary }}>
-                                {row.mapLabel}
-                              </span>
-                              <span role="cell" style={{ ...monoFont, color: textPrimary }}>
-                                {row.eventType}
-                              </span>
-                              <span role="cell" style={{ ...monoFont, color: sevColor }}>
-                                {row.severity}
-                              </span>
-                              <span role="cell" style={{ ...monoFont, color: textSecondary }}>
-                                {row.ts || "-"}
-                              </span>
-                            </div>
+                            />
+                            {tab.label} ({count})
                           </button>
                         )
-                      })
-                    )}
-                  </div>
-                </div>
+                      })}
+                    </div>
+
+                    <div
+                      role="table"
+                      aria-label="장애 이벤트 목록"
+                      style={{
+                        width: "100%",
+                        borderRadius: 12,
+                        overflow: "hidden",
+                        border: `1px solid ${borderColor}`,
+                        background: panelBackground,
+                      }}
+                    >
+                      <div
+                        role="row"
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1.2fr 1fr 0.95fr 1.55fr",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderBottom: `1px solid ${borderColor}`,
+                          color: textSecondary,
+                          background: withAlpha(cardBackground, 0.6),
+                          ...monoFont,
+                          fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                        }}
+                      >
+                        <span role="columnheader">{ui.outageColDevice}</span>
+                        <span role="columnheader">{ui.outageColEvent}</span>
+                        <span role="columnheader">{ui.outageColSeverity}</span>
+                        <span role="columnheader">{ui.outageColTime}</span>
+                      </div>
+                      <div
+                        role="rowgroup"
+                        style={{ maxHeight: 420, overflow: "auto" }}
+                      >
+                        {outageModalActiveRows.length === 0 ? (
+                          <div
+                            style={{
+                              padding: 14,
+                              color: textSecondary,
+                              ...bodyFont,
+                              fontSize: coerceFontSize(bodyFont?.fontSize, 14),
+                            }}
+                          >
+                            {ui.outageEmptyTab}
+                          </div>
+                        ) : (
+                          outageModalActiveRows.map((row) => {
+                            const sev = row.severity.toUpperCase()
+                            const sevColor =
+                              sev === "CRITICAL" || sev === "ERROR"
+                                ? statusError
+                                : sev === "WARN" || sev === "WARNING"
+                                  ? statusWarning
+                                  : textSecondary
+                            return (
+                              <button
+                                key={`outage-${outageSeverityTab}-${row.deviceId}-${row.ts}-${row.eventType}`}
+                                type="button"
+                                onClick={() => {
+                                  openEventDetail(row)
+                                  closeOutageModal()
+                                }}
+                                style={{
+                                  width: "100%",
+                                  border: "none",
+                                  background: cardBackground,
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                  padding: 0,
+                                }}
+                              >
+                                <div
+                                  role="row"
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns:
+                                      "1.2fr 1fr 0.95fr 1.55fr",
+                                    gap: 10,
+                                    padding: "10px 12px",
+                                    borderBottom: `1px solid ${borderColor}`,
+                                  }}
+                                >
+                                  <span
+                                    role="cell"
+                                    style={{ ...monoFont, color: textPrimary }}
+                                  >
+                                    {row.deviceId}
+                                  </span>
+                                  <span
+                                    role="cell"
+                                    style={{ ...monoFont, color: textPrimary }}
+                                  >
+                                    {row.eventType}
+                                  </span>
+                                  <span
+                                    role="cell"
+                                    style={{ ...monoFont, color: sevColor }}
+                                  >
+                                    {row.severity}
+                                  </span>
+                                  <span
+                                    role="cell"
+                                    style={{ ...monoFont, color: textSecondary }}
+                                  >
+                                    {formatKoreanRelativeTime(row.ts).replace(
+                                      " 전",
+                                      "전"
+                                    )}
+                                  </span>
+                                </div>
+                              </button>
+                            )
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
         ) : null}
+
+        <EventDetailModal
+          open={eventDetailOpen}
+          event={selectedOutageEvent}
+          device={eventDetailDevice}
+          deviceEvents={
+            selectedOutageEvent
+              ? deviceEvents[selectedOutageEvent.deviceId] ?? []
+              : []
+          }
+          isDeviceOffline={
+            selectedOutageEvent
+              ? wsOfflineDeviceIds.includes(selectedOutageEvent.deviceId) ||
+                eventDetailDevice?.status === "Offline"
+              : false
+          }
+          ack={selectedEventAck}
+          language={language}
+          background={background}
+          panelBackground={panelBackground}
+          cardBackground={cardBackground}
+          borderColor={borderColor}
+          textPrimary={textPrimary}
+          textSecondary={textSecondary}
+          statusOnline={statusOnline}
+          statusOffline={statusOffline}
+          statusWarning={statusWarning}
+          statusError={statusError}
+          accent={accent}
+          headingFont={headingFont}
+          bodyFont={bodyFont}
+          monoFont={monoFont}
+          onClose={closeEventDetail}
+          onAck={handleEventAck}
+          onResolve={handleEventResolve}
+          onViewDevice={handleViewDeviceFromEvent}
+        />
 
         {chatOpen && enableChat ? (
           <div
