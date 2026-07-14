@@ -4,6 +4,7 @@ import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.request.DeviceStateRequest;
+import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.infra.redis.JsonUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -104,6 +105,15 @@ public class KafkaProducer {
         template.send(
                 "robot.device.offline",
                 deviceId
+        );
+    }
+
+    public void sendInsightFeed(InsightFeedResponse insightFeedResponse) {
+        template.send(
+                "robot.device.feed",
+                insightFeedResponse.toString(),
+                jsonUtil.toJson(insightFeedResponse)
+
         );
     }
 }

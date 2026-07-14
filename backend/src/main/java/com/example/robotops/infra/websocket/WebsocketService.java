@@ -1,6 +1,7 @@
 package com.example.robotops.infra.websocket;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
+import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.domain.response.RedisEventResponse;
 import com.example.robotops.domain.response.ThroughputResponse;
 import com.example.robotops.domain.response.TotalUtilizationResponse;
@@ -50,6 +51,11 @@ public class WebsocketService {
     public void broadcastOffline(List<RedisEventResponse> redisEventResponses) {
         messagingTemplate.convertAndSend("/robot/device/offline",
                 redisEventResponses);
+    }
+
+    public void broadcastInsightFeed(InsightFeedResponse insightFeedResponse) {
+        messagingTemplate.convertAndSend("/robot/device/feed",
+                insightFeedResponse);
     }
 
 

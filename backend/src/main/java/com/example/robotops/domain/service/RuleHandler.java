@@ -4,6 +4,7 @@ import com.example.robotops.domain.service.event.EventContext;
 import java.util.Optional;
 import java.util.function.Function;
 
+
 public abstract class RuleHandler<T> {
 
     private final Function<EventContext, Boolean> rule;

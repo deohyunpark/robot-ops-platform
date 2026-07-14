@@ -1,16 +1,13 @@
 package com.example.robotops.domain.service.insight;
 
-import com.example.robotops.domain.deviceStateType.InsightLevel;
-import com.example.robotops.domain.deviceStateType.InsightType;
-import com.example.robotops.domain.request.DeviceInsightRequest;
+import com.example.robotops.domain.response.DeviceInsightResponse;
+import com.example.robotops.domain.response.eventpayload.PayloadType;
 import com.example.robotops.domain.service.RuleHandler;
 import com.example.robotops.domain.service.event.EventContext;
 import java.util.function.Function;
 
-public class InsightHandler extends RuleHandler<DeviceInsightRequest> {
 
-
-    // todo : RiskCalculator 실행
+public class InsightHandler extends RuleHandler<DeviceInsightResponse> {
     /**
      * 룰은 이미 만들어짐 realtime, stateful
      * EventContext 네이밍 변경 후 활용
@@ -21,28 +18,41 @@ public class InsightHandler extends RuleHandler<DeviceInsightRequest> {
      * 추상 클래스 -> 상속받아 사용하되 Registry 재등록? 일단 handler 추상화
      */
 
-    private final InsightLevel insightLevel;
-    private final InsightType insightType;
-    private final RiskCalculator riskCalculator;
+//    private final RiskLevel insightLevel;
+    private final String insightTitle;
+    private final String insightDescription;
+    private final String insightRecommendation;
+    private final PayloadType payloadType;
+    private final int score;
 
     public InsightHandler(
             Function<EventContext, Boolean> rule,
-            InsightLevel insightLevel,
-            InsightType insightType, RiskCalculator riskCalculator
+//            Integer score,
+            String insightTitle,
+            String insightDescription,
+            String insightRecommendation,
+            PayloadType payloadType,
+            int score
     ) {
         super(rule);
-        this.insightLevel = insightLevel;
-        this.insightType = insightType;
-        this.riskCalculator = riskCalculator;
+//        this.insightLevel = insightLevel;
+        this.insightTitle = insightTitle;
+        this.insightDescription = insightDescription;
+        this.insightRecommendation = insightRecommendation;
+        this.payloadType = payloadType;
+        this.score = score;
     }
 
     @Override
-    protected DeviceInsightRequest create(EventContext ctx) {
-        return DeviceInsightRequest.of(
+    protected DeviceInsightResponse create(EventContext ctx) {
+        return DeviceInsightResponse.of(
                 ctx.tp().robotId(),
-                insightLevel,
-                insightType.getTitle(),
-                insightType.getRecommendation()
+//                insightLevel,
+                insightTitle,
+                insightDescription,
+                insightRecommendation,
+                payloadType.toMap(ctx.tp()),
+                score
         );
     }
 
