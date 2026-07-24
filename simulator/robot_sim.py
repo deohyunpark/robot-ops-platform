@@ -1,6 +1,11 @@
-import json, time, random, math, argparse
+import json
+import time
+import random
+import math
+import argparse
 from datetime import datetime, timezone, timedelta
 import paho.mqtt.client as mqtt
+
 
 KST = timezone(timedelta(hours=9))
 
@@ -13,168 +18,363 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-def make_payload(robot_id, seq, x, y, theta, battery, temp, obstacle, error_code):
+def make_payload(
+        robot,
+        obstacle,
+        error_code,
+        estop=False,
+        speed=None,
+        cpu=None
+):
     return {
         "ts": now_kst_iso(),
-        "robotId": robot_id,
-        "seq": seq,
+        "robotId": robot["id"],
+        "seq": robot["seq"],
+
         "state": {
-            "online": True,
+            "online": robot["online"],
             "mode": "AUTO",
-            "mission": random.choice(["IDLE", "PICK", "PACK", "MOVE", "CHARGE", "DONE"]),
-            "batteryPct": round(battery, 2),
-            "speedMps": round(random.uniform(0.0, 1.8), 2)
+            "mission": robot["mission"],
+            "batteryPct": round(robot["battery"], 2),
+            "speedMps": round(
+                speed if speed is not None else robot["speed"],
+                2
+            )
         },
+
         "pose": {
-            "x": round(x, 3),
-            "y": round(y, 3),
-            "theta": round(theta, 4),
+            "x": round(robot["x"], 3),
+            "y": round(robot["y"], 3),
+            "theta": round(robot["theta"], 4),
             "mapId": "MAP-A-1F"
         },
+
         "health": {
-            "cpuPct": round(random.uniform(10, 70), 1),
-            "memPct": round(random.uniform(20, 85), 1),
-            "tempC": round(temp, 1)
+            "cpuPct": round(
+                cpu if cpu is not None else robot["cpu"],
+                1
+            ),
+            "memPct": round(robot["mem"], 1),
+            "tempC": round(robot["temp"], 1)
         },
+
         "safety": {
-            "estop": False,
-            "bumper": False,
+            "estop": estop,
+            "bumper": error_code == "COLLISION",
             "obstacle": obstacle
         },
-        "errors": ([] if not error_code else [
-            {"code": error_code, "level": "WARN"}
-        ])
+
+        "errors": (
+            []
+            if error_code is None
+            else [
+                {
+                    "code": error_code,
+                    "level": "WARN"
+                }
+            ]
+        )
     }
 
 
+def apply_issue(robot):
+
+    issue = robot["issue"]
+
+    obstacle = False
+    error_code = None
+    estop = False
+    speed = None
+    cpu = None
+
+
+    # 정상
+    if issue == "NORMAL":
+        pass
+
+
+    # 배터리 부족
+    elif issue == "LOW_BATTERY":
+        robot["battery"] = clamp(
+            robot["battery"] - 1,
+            0,
+            100
+        )
+
+        if robot["battery"] < 20:
+            error_code = "LOW_BATTERY"
+
+
+    # 과열
+    elif issue == "OVERHEAT":
+        robot["temp"] = clamp(
+            robot["temp"] + 1,
+            20,
+            95
+        )
+
+        if robot["temp"] > 80:
+            error_code = "OVERHEAT"
+
+
+    # 장애물
+    elif issue == "OBSTACLE":
+        obstacle = True
+        error_code = "OBSTACLE"
+
+
+    # 충돌
+    elif issue == "COLLISION":
+        error_code = "COLLISION"
+
+
+    # 비상정지
+    elif issue == "EMERGENCY_STOP":
+        estop = True
+        error_code = "EMERGENCY_STOP"
+
+
+    # CPU 상승
+    elif issue == "CPU_RISING":
+        robot["cpu"] = clamp(
+            robot["cpu"] + 3,
+            0,
+            100
+        )
+
+        if robot["cpu"] > 80:
+            error_code = "CPU_RISING"
+
+        cpu = robot["cpu"]
+
+
+    # 속도 상승
+    elif issue == "SPEED_RISING":
+
+        robot["speed"] = clamp(
+            robot["speed"] + 0.2,
+            0,
+            3
+        )
+
+        if robot["speed"] > 2:
+            error_code = "SPEED_RISING"
+
+        speed = robot["speed"]
+
+
+    return obstacle, error_code, estop, speed, cpu
+
+
+
 def main():
+
     ap = argparse.ArgumentParser()
 
     ap.add_argument("--host", default="localhost")
     ap.add_argument("--port", type=int, default=1883)
     ap.add_argument("--site", default="SeoulLine1")
     ap.add_argument("--robots", type=int, default=20)
-    ap.add_argument("--rate", type=float, default=1.0)
+    ap.add_argument("--rate", type=float, default=1)
     ap.add_argument("--qos", type=int, default=1)
 
-    # 추가: 랜덤 끊김 테스트
-    ap.add_argument("--drop-rate", type=float, default=0.2,
-                    help="매 루프마다 로봇이 오프라인 될 확률")
-
-    ap.add_argument("--drop-seconds-min", type=int, default=10)
-    ap.add_argument("--drop-seconds-max", type=int, default=30)
-
     args = ap.parse_args()
+
 
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
         client_id=f"robot-sim-{random.randint(1000,9999)}"
     )
 
-    client.connect(args.host, args.port, keepalive=60)
+
+    client.connect(
+        args.host,
+        args.port,
+        keepalive=60
+    )
+
     client.loop_start()
+
+
+    issues = [
+        "NORMAL",
+        "LOW_BATTERY",
+        "OVERHEAT",
+        "OBSTACLE",
+        "COLLISION",
+        "EMERGENCY_STOP",
+        "CPU_RISING",
+        "SPEED_RISING",
+        "OFFLINE"
+    ]
+
 
     robots = []
 
+
     for i in range(args.robots):
+
         rid = f"RBT-{i+1:04d}"
 
-        robots.append({
-            "id": rid,
-            "seq": 0,
-            "x": random.uniform(0, 30),
-            "y": random.uniform(0, 20),
-            "theta": random.uniform(-math.pi, math.pi),
-            "battery": random.uniform(40, 100),
-            "temp": random.uniform(35, 55),
+        issue = (
+            issues[i]
+            if i < len(issues)
+            else "NORMAL"
+        )
 
-            # 오프라인 테스트용
-            "offline_until": 0
+
+        robots.append({
+
+            "id": rid,
+
+            "issue": issue,
+
+            "seq": 0,
+
+            "online": True,
+
+            "mission": random.choices(
+                [
+                    "IDLE",
+                    "MOVE",
+                    "PICK",
+                    "PACK",
+                    "CHARGE"
+                ],
+                weights=[5, 25, 25, 25, 20],
+                k=1
+            )[0],
+            "offline_after": time.time() + random.randint(8, 15),
+
+            "x": random.uniform(0,30),
+            "y": random.uniform(0,20),
+            "theta": random.uniform(
+                -math.pi,
+                math.pi
+            ),
+
+            "battery": random.uniform(
+                40,
+                100
+            ),
+
+            "temp": random.uniform(
+                35,
+                50
+            ),
+
+            "cpu": random.uniform(
+                20,
+                40
+            ),
+
+            "mem": random.uniform(
+                20,
+                60
+            ),
+
+            "speed": random.uniform(
+                0.5,
+                1.5
+            )
         })
 
-    interval = 1.0 / max(args.rate, 0.1)
+
+    interval = 1 / max(args.rate,0.1)
+
 
     print(
-        f"Publishing robots={args.robots}, "
-        f"rate={args.rate} msg/s/robot, "
-        f"dropRate={args.drop_rate}"
+        f"robots={args.robots}"
     )
 
+
     try:
+
         while True:
-            start = time.time()
-            now = time.time()
 
-            for r in robots:
+            start=time.time()
 
-                # ---------------------------
-                # 현재 오프라인 상태면 publish 안 함
-                # ---------------------------
-                if now < r["offline_until"]:
+
+            for robot in robots:
+
+    # 5% 확률로 mission 변경
+                if random.random() < 0.05:
+                    robot["mission"] = random.choices([
+                        "IDLE",
+                        "MOVE",
+                        "PICK",
+                        "PACK",
+                        "CHARGE",
+                        "DONE"
+                    ],
+                    weights=[1, 30, 30, 20, 10, 9],
+                    k=1
+                    )[0]
+                # OFFLINE 테스트
+                if (
+                    robot["issue"] == "OFFLINE"
+                    and time.time() >= robot["offline_after"]
+                ):
+                    robot["online"] = False
                     continue
 
-                # ---------------------------
-                # 랜덤 오프라인 진입
-                # ---------------------------
-                if random.random() < args.drop_rate:
-                    sec = random.randint(
-                        args.drop_seconds_min,
-                        args.drop_seconds_max
+                robot["seq"] += 1
+
+
+
+
+                robot["theta"] += random.uniform(
+                    -0.2,
+                    0.2
+                )
+
+
+                robot["x"] = clamp(
+                    robot["x"]
+                    + math.cos(robot["theta"])
+                    * random.uniform(0,0.4),
+                    0,
+                    30
+                )
+
+
+                robot["y"] = clamp(
+                    robot["y"]
+                    + math.sin(robot["theta"])
+                    * random.uniform(0,0.4),
+                    0,
+                    20
+                )
+
+
+                # LOW_BATTERY 로봇 제외, 일반 로봇만 천천히 감소
+                if robot["issue"] != "LOW_BATTERY":
+                    robot["battery"] = clamp(
+                        robot["battery"] - random.uniform(0, 0.001),
+                        0,
+                        100
                     )
 
-                    r["offline_until"] = now + sec
+                obstacle, error, estop, speed, cpu = apply_issue(robot)
 
-                    print(f"[DROP] {r['id']} offline {sec}s")
-                    continue
 
-                # ---------------------------
-                # 정상 telemetry 발행
-                # ---------------------------
-                r["seq"] += 1
-                r["theta"] += random.uniform(-0.2, 0.2)
-
-                r["x"] = clamp(
-                    r["x"] + math.cos(r["theta"]) * random.uniform(0.0, 0.4),
-                    0, 30
-                )
-
-                r["y"] = clamp(
-                    r["y"] + math.sin(r["theta"]) * random.uniform(0.0, 0.4),
-                    0, 20
-                )
-
-                r["battery"] = clamp(
-                    r["battery"] - random.uniform(0.00, 0.05),
-                    0, 100
-                )
-
-                r["temp"] = clamp(
-                    r["temp"] + random.uniform(-0.2, 0.5),
-                    20, 95
-                )
-
-                obstacle = (random.random() < 0.03)
-
-                error_code = None
-
-                if random.random() < 0.01:
-                    error_code = random.choice([
-                        "LIDAR_OCCLUDED",
-                        "MOTOR_OVER_CURRENT",
-                        "WHEEL_SLIP"
-                    ])
-
-                if r["temp"] > 82 and random.random() < 0.2:
-                    error_code = "OVERHEAT"
 
                 payload = make_payload(
-                    r["id"], r["seq"],
-                    r["x"], r["y"], r["theta"],
-                    r["battery"], r["temp"],
-                    obstacle, error_code
+                    robot,
+                    obstacle,
+                    error,
+                    estop,
+                    speed,
+                    cpu
                 )
 
-                topic = f"factory/{args.site}/robot/{r['id']}/telemetry"
+
+                topic = (
+                    f"factory/{args.site}"
+                    f"/robot/{robot['id']}"
+                    "/telemetry"
+                )
+
 
                 client.publish(
                     topic,
@@ -183,15 +383,25 @@ def main():
                     retain=False
                 )
 
-            elapsed = time.time() - start
-            time.sleep(max(0.0, interval - elapsed))
+
+            elapsed=time.time()-start
+
+            time.sleep(
+                max(
+                    0,
+                    interval-elapsed
+                )
+            )
+
 
     except KeyboardInterrupt:
         pass
 
+
     finally:
         client.loop_stop()
         client.disconnect()
+
 
 
 if __name__ == "__main__":
