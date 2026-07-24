@@ -35,15 +35,11 @@ public class DeviceEventService {
         if (!redisService.tryAcquire(deviceEvent)) {
             return;
         }
-
         deviceEventRepository.save(deviceEvent);
-        log.info("[DB] Device event insert = {}", deviceEvent.getDeviceId());
 
-//        // todo : maybe 교체각
-//        applicationEventPublisher.publishEvent(
-//                DeviceEventResponse.of(deviceEvent)
-//        );
+//        log.info("[DB] Device event insert = {}", deviceEvent.getDeviceId());
 
+        // ws
         kafkaProducer.sendAllEvents(deviceEvent.getDeviceId());
 
 

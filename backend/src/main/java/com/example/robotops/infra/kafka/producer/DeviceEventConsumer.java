@@ -10,6 +10,7 @@ import com.example.robotops.infra.kafka.consumer.KafkaProducer;
 import com.example.robotops.infra.redis.JsonUtil;
 import com.example.robotops.infra.redis.RedisSyncService;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -36,7 +37,11 @@ public class DeviceEventConsumer {
 
         // 3. rule check 후 event 생성
         List<DeviceEvent> deviceEventList =
-                eventEngine.process(eventContext);
+                eventEngine.process(eventContext)
+                        .stream().filter(Objects::nonNull)
+                        .toList();
+
+
 
         // 4. event 생성 후 레디스 갱신 + act kafka
         for (DeviceEvent event : deviceEventList) {

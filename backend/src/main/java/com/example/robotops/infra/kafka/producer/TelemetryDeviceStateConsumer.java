@@ -23,7 +23,7 @@ public class TelemetryDeviceStateConsumer {
 
         DeviceStateRequest deviceStateRequest = jsonUtil.fromJson(message, DeviceStateRequest.class);
         deviceStateRepository.upsert(deviceStateRequest);
-        log.info("[DB] device state upserted = {}", deviceStateRequest.deviceId());
+//        log.info("[DB] device state upserted = {}", deviceStateRequest.deviceId());
     }
 
     @KafkaListener(topics = "robot.device.state", groupId = "redis")
@@ -32,7 +32,7 @@ public class TelemetryDeviceStateConsumer {
         DeviceStateRequest deviceStateRequest = jsonUtil.fromJson(message, DeviceStateRequest.class);
 
         redisService.saveState(deviceStateRequest);
-        log.info("[Redis] device state/lastSeen saved = {}", deviceStateRequest.deviceId());
+//        log.info("[Redis] device state/lastSeen saved = {}", deviceStateRequest.deviceId());
 
         // todo : 로그 캐싱값을 보여줄지 아님 websocket 기준으로 보여줄지
     }

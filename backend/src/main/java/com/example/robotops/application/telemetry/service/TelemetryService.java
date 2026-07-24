@@ -3,7 +3,6 @@ package com.example.robotops.application.telemetry.service;
 import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
 import com.example.robotops.application.telemetry.request.payload.TopicInfo;
 import com.example.robotops.domain.request.DeviceStateRequest;
-import com.example.robotops.domain.service.insight.InsightScheduler;
 import com.example.robotops.infra.kafka.consumer.KafkaProducer;
 import com.example.robotops.infra.mqtt.MqttParser;
 import jakarta.transaction.Transactional;
@@ -21,7 +20,6 @@ public class TelemetryService {
 
     private final MqttParser mqttParser;
     private final KafkaProducer kafkaProducer;
-    private final InsightScheduler insightScheduler;
 
     @Transactional
     public void process(String topic, MqttMessage message) {
@@ -42,7 +40,7 @@ public class TelemetryService {
                     kafkaProducer.detectDeviceEvent(telemetryPayload);
                     kafkaProducer.sendDeviceState(DeviceStateRequest.of(TopicInfo.of(topic), telemetryPayload));
                     kafkaProducer.detectMission(telemetryPayload);
-                    insightScheduler.detectInsights(telemetryPayload);
+                    kafkaProducer.createInsightFeed(telemetryPayload);
                 }
         );
 

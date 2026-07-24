@@ -24,13 +24,13 @@ public class TelemetryRawDataConsumer {
     public void saveRawData(String message) {
         TelemetryRawRequest telemetryRawRequest = jsonUtil.fromJson(message, TelemetryRawRequest.class);
         telemetryRepository.save(telemetryRawRequest);
-        log.info("[DB] MQTT raw data inserted = {}", telemetryRawRequest.deviceId());
+//        log.info("[DB] MQTT raw data inserted = {}", telemetryRawRequest.deviceId());
     }
 
     @KafkaListener(topics = "robot.telemetry.payload", groupId = "redis")
     public void setRedis(String message) {
         TelemetryPayload telemetryPayload = jsonUtil.fromJson(message, TelemetryPayload.class);
         redisSyncService.eventSync(telemetryPayload);
-        log.info("[Redis] MQTT raw data inserted = {}", telemetryPayload.robotId());
+//        log.info("[Redis] MQTT raw data inserted = {}", telemetryPayload.robotId());
     }
 }

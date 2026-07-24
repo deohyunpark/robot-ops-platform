@@ -30,3 +30,7 @@ spring:
 app:
   mqtt:
     brokerUrl: ${MQTT_BROKER_URL:tcp://mqtt:1883}
+
+openai:
+  api-key: ${OPENAI_API_KEY}
+  model: gpt-5-mini

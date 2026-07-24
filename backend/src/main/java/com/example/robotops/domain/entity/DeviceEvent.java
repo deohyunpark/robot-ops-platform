@@ -1,7 +1,6 @@
 package com.example.robotops.domain.entity;
 
 import com.example.robotops.domain.deviceStateType.EventType;
-import com.example.robotops.domain.deviceStateType.Mission;
 import com.example.robotops.domain.deviceStateType.Severity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -18,10 +17,12 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+@ToString
 @Getter
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -45,9 +46,9 @@ public class DeviceEvent {
     @Column(name = "severity", nullable = false)
     private Severity severity;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "current_mission", nullable = false)
-    private Mission currentMission;
+//    @Enumerated(EnumType.STRING)
+//    @Column(name = "current_mission", nullable = false)
+//    private Mission currentMission;
 
     @Column(columnDefinition = "jsonb")
     @JdbcTypeCode(SqlTypes.JSON)

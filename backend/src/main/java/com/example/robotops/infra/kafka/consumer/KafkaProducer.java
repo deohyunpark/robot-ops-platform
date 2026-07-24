@@ -108,12 +108,23 @@ public class KafkaProducer {
         );
     }
 
+
+    // feed 생성
+    public void createInsightFeed(TelemetryPayload telemetryPayload) {
+        template.send(
+                "robot.device.feed.detect",
+                telemetryPayload.robotId(),
+                jsonUtil.toJson(telemetryPayload)
+
+        );
+    }
+
+    //feed 저장, redis, ws, openAI
     public void sendInsightFeed(InsightFeedResponse insightFeedResponse) {
         template.send(
                 "robot.device.feed",
                 insightFeedResponse.toString(),
                 jsonUtil.toJson(insightFeedResponse)
-
         );
     }
 }

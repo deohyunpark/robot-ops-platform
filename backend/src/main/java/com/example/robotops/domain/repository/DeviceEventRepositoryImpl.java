@@ -19,16 +19,14 @@ public class DeviceEventRepositoryImpl implements DeviceEventRepositoryCustom {
             event_type,
             severity,
             payload,
-            created_at,
-            current_mission,
+            created_at
         )
         VALUES (
             :deviceId,
             :eventType,
             :severity,
             :payload::jsonb,
-            now(),
-            :
+            now()
         )
     """;
     private final NamedParameterJdbcTemplate jdbcTemplate;

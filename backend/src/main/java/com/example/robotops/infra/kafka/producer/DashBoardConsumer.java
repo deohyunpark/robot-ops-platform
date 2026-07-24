@@ -1,7 +1,6 @@
 package com.example.robotops.infra.kafka.producer;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
-import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.domain.service.DashBoardService;
 import com.example.robotops.domain.service.DeviceEventService;
 import com.example.robotops.infra.redis.JsonUtil;
@@ -46,8 +45,4 @@ public class DashBoardConsumer {
         websocketService.broadcastThroughput(dashBoardService.getThroughput());
     }
 
-    @KafkaListener(topics = "robot.device.feed", groupId = "all")
-    public void getInsightFeed(String message) {
-        websocketService.broadcastInsightFeed(jsonUtil.fromJson(message, InsightFeedResponse.class));
-    }
 }

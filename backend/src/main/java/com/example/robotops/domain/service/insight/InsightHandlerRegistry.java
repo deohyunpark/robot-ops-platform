@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class InsightHandlerRegistry {
     @Bean
-    public InsightHandler offlineHandler(RealtimeRule realtimeRule) {
+    public InsightHandler offlineInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::offline,
 //                RiskLevel.HIGH,
@@ -23,7 +23,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler bumperHandler(RealtimeRule realtimeRule) {
+    public InsightHandler bumperInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::bumper,
 //                RiskLevel.HIGH,
@@ -36,7 +36,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler emergencyStopHandler(RealtimeRule realtimeRule) {
+    public InsightHandler emergencyStopInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::emergencyStop,
 //                RiskLevel.HIGH,
@@ -49,7 +49,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler obstacleHandler(RealtimeRule realtimeRule) {
+    public InsightHandler obstacleInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::obstacle,
 //                RiskLevel.MIDDLE,
@@ -62,7 +62,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler overheatHandler(RealtimeRule realtimeRule) {
+    public InsightHandler overheatInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::overheat,
 //                RiskLevel.HIGH,
@@ -75,7 +75,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler lowBatteryHandler(RealtimeRule realtimeRule) {
+    public InsightHandler lowBatteryInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::lowBattery,
 //                RiskLevel.HIGH,
@@ -88,7 +88,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler idleHandler(RealtimeRule realtimeRule) {
+    public InsightHandler idleInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::idle,
 //                RiskLevel.HIGH,
@@ -101,7 +101,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler chargingHandler(RealtimeRule realtimeRule) {
+    public InsightHandler chargingInsightHandler(RealtimeRule realtimeRule) {
         return new InsightHandler(
                 realtimeRule::charging,
 //                RiskLevel.HIGH,
@@ -114,7 +114,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler speedTrendHandler(StatefulRule statefulRule) {
+    public InsightHandler speedTrendInsightHandler(StatefulRule statefulRule) {
         return new InsightHandler(
                 statefulRule::isTrendingUp,
 //                RiskLevel.HIGH,
@@ -127,7 +127,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler cpuWindowHandler(StatefulRule statefulRule) {
+    public InsightHandler cpuWindowInsightHandler(StatefulRule statefulRule) {
         return new InsightHandler(
                 cxt -> statefulRule.isHighOverTime(cxt, "cpu"),
 //                RiskLevel.HIGH,
@@ -140,7 +140,7 @@ public class InsightHandlerRegistry {
     }
 
     @Bean
-    public InsightHandler tempWindowHandler(StatefulRule statefulRule) {
+    public InsightHandler tempWindowInsightHandler(StatefulRule statefulRule) {
         return new InsightHandler(
                 cxt -> statefulRule.isHighOverTime(cxt, "temp"),
 //                RiskLevel.HIGH,

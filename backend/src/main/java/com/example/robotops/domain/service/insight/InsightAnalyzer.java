@@ -5,6 +5,7 @@ import com.example.robotops.domain.response.DeviceRiskResponse;
 import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.domain.service.event.EventContext;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -16,11 +17,16 @@ public class InsightAnalyzer {
     private final RiskCalculator riskCalculator;
 
 
-    // todo : 이거 id별로 나오는지.. 나오는것같긴함..
+
     public InsightFeedResponse analyze(EventContext eventContext) {
 
         // engine 에서 만든 request 리스트 추출
-        List<DeviceInsightResponse> requests = insightEngine.process(eventContext);
+        List<DeviceInsightResponse> requests = insightEngine.process(eventContext)
+                .stream().filter(Objects::nonNull).toList();
+
+        if (requests.isEmpty()) {
+            return null;
+        }
 
         Integer calculated = riskCalculator.calculate(requests);
         // 생성된 DeviceInsight List kafka

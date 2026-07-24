@@ -1,10 +1,10 @@
 package com.example.robotops.infra.websocket;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
-import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.domain.response.RedisEventResponse;
 import com.example.robotops.domain.response.ThroughputResponse;
 import com.example.robotops.domain.response.TotalUtilizationResponse;
+import com.example.robotops.infra.openai.AiSummaryResponse;
 import com.example.robotops.infra.redis.JsonUtil;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -53,9 +53,9 @@ public class WebsocketService {
                 redisEventResponses);
     }
 
-    public void broadcastInsightFeed(InsightFeedResponse insightFeedResponse) {
+    public void broadcastInsightFeed(AiSummaryResponse aiSummaryResponse) {
         messagingTemplate.convertAndSend("/robot/device/feed",
-                insightFeedResponse);
+                aiSummaryResponse);
     }
 
 
