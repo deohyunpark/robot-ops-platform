@@ -18,6 +18,7 @@ import {
   type DeviceUtilization,
 } from "../../services/dashboardUtilization"
 import { EventDetailModal } from "./EventDetailModal"
+import { InsightFeedPanel } from "./InsightFeedPanel"
 import { useDeviceTableRenderer } from "./DashboardDeviceTable"
 import {
   defaultAckState,
@@ -29,7 +30,6 @@ import {
   Badge,
   BatteryGauge,
   KPI,
-  MetricCard,
   Sparkline,
 } from "./DashboardParts"
 import { roboticsMonitoringDashboardDefaults } from "./roboticsMonitoringDashboardDefaults"
@@ -41,6 +41,11 @@ import type {
 import {
   deviceEventsFeedFromPayload,
   eventBatchFromPayload,
+  groupInsightFeedByRobot,
+  insightFeedItemsFromPayload,
+  isInsightFeedPayload,
+  isInsightFeedStompDestination,
+  mergeInsightFeedItems,
   offlineEventBatchFromPayload,
   resolveEventDeviceId,
   telemetryBatchToDevices,
@@ -51,6 +56,7 @@ import type {
   BackendDeviceEvent,
   BackendThroughputResponse,
   DeviceEventFeedRow,
+  InsightFeedItem,
 } from "./telemetryAdapter"
 import { useElementInView } from "./useElementInView"
 import {
@@ -235,7 +241,13 @@ export default function RoboticsMonitoringDashboard(
     useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatInput, setChatInput] = useState("")
-  const [rightTab, setRightTab] = useState<"fleetMap" | "insights" | "chat">("fleetMap")
+  const [rightTab, setRightTab] = useState<"fleetMap" | "insightFeed" | "chat">(
+    "fleetMap"
+  )
+  const [insightFeedItems, setInsightFeedItems] = useState<InsightFeedItem[]>([])
+  const [dismissedInsightRobotIds, setDismissedInsightRobotIds] = useState<
+    Set<string>
+  >(() => new Set())
   const [mapIndicatorMode, setMapIndicatorMode] = useState<
     "default" | "mission" | "eventType"
   >("default")
@@ -427,6 +439,17 @@ export default function RoboticsMonitoringDashboard(
           )
         }
       }
+
+      const isFeedMessage =
+        isInsightFeedStompDestination(meta?.destination) ||
+        isInsightFeedPayload(payload)
+      const feedItems = isFeedMessage ? insightFeedItemsFromPayload(payload) : []
+
+      if (feedItems.length) {
+        startTransition(() =>
+          setInsightFeedItems((prev) => mergeInsightFeedItems(prev, feedItems))
+        )
+      }
     })
     socketRef.current = socket
 
@@ -456,7 +479,7 @@ export default function RoboticsMonitoringDashboard(
         ? "요약 · 통계 · 이상탐지 · 질의응답"
         : "Summaries · Statistics · Anomaly detection · Q&A",
       tabFleetMap: ko ? "전체 장비 위치" : "Fleet Positions",
-      tabInsights: ko ? "인사이트" : "Insights",
+      tabInsightFeed: ko ? "인사이트 피드" : "Insight Feed",
       tabChat: "Daisy Assistant",
       mapTagDefault: ko ? "기본" : "Default",
       mapTagMission: ko ? "상태" : "Status",
@@ -468,11 +491,6 @@ export default function RoboticsMonitoringDashboard(
       qaOfflineList: ko ? "오프라인 목록" : "Offline list",
       qaHotList: ko ? "고온 목록" : "Hot list",
       qaLowBatteryList: ko ? "저전력 목록" : "Low battery list",
-      insightsOverview: ko ? "관제 인사이트" : "Monitoring insights",
-      insightsAnomalies: ko ? "이상 징후" : "Anomalies",
-      insightsNoAnomaly: ko
-        ? "현재 감지된 이상이 없습니다."
-        : "No anomalies detected right now.",
       kpiTotal: ko ? "총 장비" : "Total Devices",
       kpiOnlineOffline: ko ? "온라인 / 오프라인" : "Online / Offline",
       kpiAvgBattery: ko ? "고온 장비 수" : "Hot Devices",
@@ -520,7 +538,6 @@ export default function RoboticsMonitoringDashboard(
       filterOffline: ko ? "오프라인" : "Offline",
       filterLowBattery: ko ? "저전력" : "Low battery",
       filterHot: ko ? "고온" : "Hot",
-      hotDeviceCount: ko ? "고온 장비 수" : "Hot Device Count",
       filterEmergency: ko ? "긴급" : "Emergency",
       showing: ko ? "표시" : "Showing",
       of: ko ? " / " : " of ",
@@ -1099,41 +1116,28 @@ export default function RoboticsMonitoringDashboard(
     }, 250)
   }, [chatInput, language])
 
-  const copilotInsights = useMemo(() => {
-    const HOT_TEMP_C = 90
-    const total = derivedDevices.length
-    const offline = derivedDevices.filter((d) => d.status === "Offline").length
-    const low = derivedDevices.filter((d) => d.battery <= lowBatteryThreshold).length
-    const hot = derivedDevices.filter((d) => d.temperature > HOT_TEMP_C).length
-    const emergency = derivedDevices.filter((d) => d.emergency).length
+  const visibleInsightFeedItems = useMemo(
+    () =>
+      insightFeedItems.filter(
+        (item) => !dismissedInsightRobotIds.has(item.robotId || "UNKNOWN")
+      ),
+    [insightFeedItems, dismissedInsightRobotIds]
+  )
 
-    const anomalies = derivedDevices
-      .filter((d) => {
-        return (
-          d.emergency ||
-          d.status === "Offline" ||
-          d.battery <= lowBatteryThreshold ||
-          d.temperature >= abnormalTempThreshold
-        )
-      })
-      .map((d) => {
-        const reasons: string[] = []
-        if (d.emergency) reasons.push("E-STOP")
-        if (d.status === "Offline") reasons.push("OFFLINE")
-        if (d.battery <= lowBatteryThreshold) reasons.push("LOW_BAT")
-        if (d.temperature >= abnormalTempThreshold) reasons.push("HOT")
-        const score =
-          (d.emergency ? 100 : 0) +
-          (d.status === "Offline" ? 40 : 0) +
-          (d.temperature >= abnormalTempThreshold ? 25 : 0) +
-          (d.battery <= lowBatteryThreshold ? 20 : 0)
-        return { id: d.id, site: d.site, reasons, score }
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 8)
+  const visibleInsightFeedGroupCount = useMemo(
+    () => groupInsightFeedByRobot(visibleInsightFeedItems).length,
+    [visibleInsightFeedItems]
+  )
 
-    return { total, offline, low, hot, emergency, anomalies }
-  }, [abnormalTempThreshold, derivedDevices, lowBatteryThreshold])
+  const dismissInsightFeedRobot = useCallback((robotId: string) => {
+    startTransition(() =>
+      setDismissedInsightRobotIds((prev) => {
+        const next = new Set(prev)
+        next.add(robotId)
+        return next
+      })
+    )
+  }, [])
 
   const renderTable = useDeviceTableRenderer({
     abnormalTempThreshold,
@@ -1779,6 +1783,17 @@ export default function RoboticsMonitoringDashboard(
         .rm-dashboard-root *::-webkit-scrollbar-corner {
           background: ${cardBackground};
         }
+        .rm-insight-feed-scroll {
+          flex: 1;
+          min-height: 0;
+          overflow-y: scroll;
+          overflow-x: hidden;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-gutter: stable;
+        }
+        .rm-insight-feed-scroll::-webkit-scrollbar {
+          width: 12px;
+        }
       `}</style>
 
       <header
@@ -1981,7 +1996,7 @@ export default function RoboticsMonitoringDashboard(
           minHeight: 0,
           display: "grid",
           gridTemplateColumns: showDetailPanel
-            ? "minmax(540px, 1.55fr) minmax(360px, 1fr)"
+            ? "minmax(540px, 1.45fr) minmax(420px, 1fr)"
             : "1fr",
           gap: 12,
         }}
@@ -2162,6 +2177,7 @@ export default function RoboticsMonitoringDashboard(
             aria-label="Copilot panel"
             style={{
               minHeight: 0,
+              height: "100%",
               borderRadius: 14,
               background: panelBackground,
               border: `1px solid ${borderColor}`,
@@ -2254,21 +2270,33 @@ export default function RoboticsMonitoringDashboard(
                 </button>
                 <button
                   type="button"
-                  onClick={() => startTransition(() => setRightTab("insights"))}
+                  onClick={() => startTransition(() => setRightTab("insightFeed"))}
                   style={{
                     border: `1px solid ${borderColor}`,
-                    background: rightTab === "insights" ? cardBackground : "transparent",
+                    background:
+                      rightTab === "insightFeed" ? cardBackground : "transparent",
                     color: textPrimary,
                     borderRadius: 12,
                     padding: "8px 10px",
                     height: 32,
                     boxSizing: "border-box",
                     cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
                     ...monoFont,
                     fontSize: coerceFontSize(monoFont?.fontSize, 12),
                   }}
                 >
-                  {ui.tabInsights}
+                  {ui.tabInsightFeed}
+                  {visibleInsightFeedGroupCount ? (
+                    <Badge
+                      label={String(visibleInsightFeedGroupCount)}
+                      color={statusWarning}
+                      font={monoFont}
+                      subtle
+                    />
+                  ) : null}
                 </button>
                 <button
                   type="button"
@@ -2337,6 +2365,7 @@ export default function RoboticsMonitoringDashboard(
                 display: "flex",
                 flexDirection: "column",
                 gap: 12,
+                flex: 1,
                 minHeight: 0,
                 overflow: "hidden",
               }}
@@ -2837,247 +2866,22 @@ export default function RoboticsMonitoringDashboard(
                     ) : null}
                   </div>
                 </div>
-              ) : rightTab === "insights" ? (
-                <>
-                  <div
-                    style={{
-                      borderRadius: 14,
-                      background: cardBackground,
-                      border: `1px solid ${borderColor}`,
-                      padding: 14,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        ...bodyFont,
-                        fontSize: coerceFontSize(bodyFont?.fontSize, 14),
-                        lineHeight: bodyFont?.lineHeight ?? "1.35em",
-                        letterSpacing: bodyFont?.letterSpacing ?? "-0.01em",
-                        fontWeight: 500,
-                        color: textPrimary,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {ui.insightsOverview}
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                        gap: 10,
-                      }}
-                    >
-                      <MetricCard
-                        label={ui.kpiTotal}
-                        value={`${copilotInsights.total}`}
-                        hint={ui.hintAllUnits}
-                        color={accent}
-                        bg={panelBackground}
-                        border={borderColor}
-                        textPrimary={textPrimary}
-                        textSecondary={textSecondary}
-                        labelFont={monoFont}
-                        valueFont={headingFont}
-                      />
-                      <MetricCard
-                        label={ui.filterOffline}
-                        value={`${copilotInsights.offline}`}
-                        hint=""
-                        color={statusOffline}
-                        bg={panelBackground}
-                        border={borderColor}
-                        textPrimary={textPrimary}
-                        textSecondary={textSecondary}
-                        labelFont={monoFont}
-                        valueFont={headingFont}
-                      />
-                      <MetricCard
-                        label={ui.filterLowBattery}
-                        value={`${copilotInsights.low}`}
-                        hint={`≤ ${Math.round(lowBatteryThreshold)}%`}
-                        color={statusWarning}
-                        bg={panelBackground}
-                        border={borderColor}
-                        textPrimary={textPrimary}
-                        textSecondary={textSecondary}
-                        labelFont={monoFont}
-                        valueFont={headingFont}
-                      />
-                      <MetricCard
-                        label={ui.hotDeviceCount}
-                        value={`${copilotInsights.hot} / ${copilotInsights.total}`}
-                        hint={`Hot > 90°C`}
-                        color={statusError}
-                        bg={panelBackground}
-                        border={borderColor}
-                        textPrimary={textPrimary}
-                        textSecondary={textSecondary}
-                        labelFont={monoFont}
-                        valueFont={headingFont}
-                      />
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      borderRadius: 14,
-                      background: cardBackground,
-                      border: `1px solid ${borderColor}`,
-                      padding: 14,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 10,
-                      minHeight: 0,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 10,
-                      }}
-                    >
-                      <div
-                        style={{
-                          ...bodyFont,
-                          fontSize: coerceFontSize(bodyFont?.fontSize, 14),
-                          lineHeight: bodyFont?.lineHeight ?? "1.35em",
-                          letterSpacing: bodyFont?.letterSpacing ?? "-0.01em",
-                          fontWeight: 500,
-                          color: textPrimary,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {ui.insightsAnomalies}
-                      </div>
-                      <Badge
-                        label={`${copilotInsights.anomalies.length}`}
-                        color={copilotInsights.anomalies.length ? statusWarning : textSecondary}
-                        font={monoFont}
-                        subtle
-                      />
-                    </div>
-
-                    {copilotInsights.anomalies.length === 0 ? (
-                      <div
-                        style={{
-                          padding: 12,
-                          borderRadius: 12,
-                          background: panelBackground,
-                          border: `1px solid ${borderColor}`,
-                          color: textSecondary,
-                          ...bodyFont,
-                          fontSize: coerceFontSize(bodyFont?.fontSize, 14),
-                        }}
-                      >
-                        {ui.insightsNoAnomaly}
-                      </div>
-                    ) : (
-                      <div
-                        role="table"
-                        aria-label="Anomaly list"
-                        style={{
-                          width: "100%",
-                          borderRadius: 12,
-                          overflow: "hidden",
-                          border: `1px solid ${borderColor}`,
-                          background: panelBackground,
-                        }}
-                      >
-                        <div
-                          role="row"
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "1.1fr 0.8fr 1.2fr",
-                            gap: 10,
-                            padding: "10px 12px",
-                            borderBottom: `1px solid ${borderColor}`,
-                            color: textSecondary,
-                            ...monoFont,
-                            fontSize: coerceFontSize(monoFont?.fontSize, 12),
-                          }}
-                        >
-                          <span role="columnheader">Robot</span>
-                          <span role="columnheader">Site</span>
-                          <span role="columnheader">Reason</span>
-                        </div>
-                        <div role="rowgroup" style={{ maxHeight: 220, overflow: "auto" }}>
-                          {copilotInsights.anomalies.map((a) => (
-                            <button
-                              key={a.id}
-                              type="button"
-                              onClick={() => onSelect(a.id)}
-                              style={{
-                                width: "100%",
-                                border: "none",
-                                background: "transparent",
-                                padding: 0,
-                                cursor: "pointer",
-                                textAlign: "left",
-                              }}
-                            >
-                              <div
-                                role="row"
-                                style={{
-                                  display: "grid",
-                                  gridTemplateColumns: "1.1fr 0.8fr 1.2fr",
-                                  gap: 10,
-                                  padding: "10px 12px",
-                                  borderBottom: `1px solid ${borderColor}`,
-                                  background: cardBackground,
-                                }}
-                              >
-                                <span
-                                  role="cell"
-                                  style={{
-                                    ...monoFont,
-                                    fontSize: coerceFontSize(monoFont?.fontSize, 12),
-                                    color: textPrimary,
-                                    whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {a.id}
-                                </span>
-                                <span
-                                  role="cell"
-                                  style={{
-                                    ...monoFont,
-                                    fontSize: coerceFontSize(monoFont?.fontSize, 12),
-                                    color: textSecondary,
-                                    whiteSpace: "nowrap",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                  }}
-                                >
-                                  {a.site}
-                                </span>
-                                <span
-                                  role="cell"
-                                  style={{
-                                    ...monoFont,
-                                    fontSize: coerceFontSize(monoFont?.fontSize, 12),
-                                    color: statusWarning,
-                                    whiteSpace: "nowrap",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                  }}
-                                >
-                                  {a.reasons.join(" • ")}
-                                </span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                </>
+              ) : rightTab === "insightFeed" ? (
+                <InsightFeedPanel
+                  items={visibleInsightFeedItems}
+                  language={language}
+                  cardBackground={cardBackground}
+                  panelBackground={panelBackground}
+                  borderColor={borderColor}
+                  textPrimary={textPrimary}
+                  textSecondary={textSecondary}
+                  accent={accent}
+                  statusError={statusError}
+                  statusWarning={statusWarning}
+                  bodyFont={bodyFont}
+                  monoFont={monoFont}
+                  onDismissRobot={dismissInsightFeedRobot}
+                />
               ) : (
                 <div
                   style={{

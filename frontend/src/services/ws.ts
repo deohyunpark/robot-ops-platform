@@ -1,12 +1,68 @@
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8080/ws"
-const WS_TOPICS = (
-  import.meta.env.VITE_WS_TOPICS ??
-  `${import.meta.env.VITE_WS_TOPIC ?? "/robot/device/state"},/robot/device/event,/robot/device/events,/robot/device/throughput,/robot/device/offline,/robot/device/totalUtilization`
+const FEED_TOPIC = "/robot/device/feed"
+const WS_TOPICS = normalizeTopics(
+  (
+    import.meta.env.VITE_WS_TOPICS ??
+    `${import.meta.env.VITE_WS_TOPIC ?? "/robot/device/state"},/robot/device/event,/robot/device/events,/robot/device/throughput,/robot/device/offline,/robot/device/totalUtilization,${FEED_TOPIC}`
+  )
+    .split(",")
+    .map((x: string) => x.trim())
+    .filter(Boolean)
 )
-  .split(",")
-  .map((x: string) => x.trim())
-  .filter(Boolean)
 const STOMP_ACCEPT_VERSION = "1.2,1.1,1.0"
+
+function normalizeTopics(topics: string[]): string[] {
+  const merged = [...topics]
+  if (!merged.some((t) => t === FEED_TOPIC || t.endsWith(FEED_TOPIC))) {
+    merged.push(FEED_TOPIC)
+  }
+  return Array.from(new Set(merged))
+}
+
+function isFeedDestination(destination?: string): boolean {
+  const d = (destination ?? "").trim().toLowerCase()
+  return d.includes("/robot/device/feed")
+}
+
+function looksLikeInsightFeedPayload(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false
+  const root = data as Record<string, unknown>
+  const candidates: Record<string, unknown>[] = [root]
+  if (root.payload && typeof root.payload === "object") {
+    candidates.push(root.payload as Record<string, unknown>)
+  }
+  if (root.data && typeof root.data === "object") {
+    candidates.push(root.data as Record<string, unknown>)
+  }
+  return candidates.some(
+    (candidate) =>
+      "insightResponses" in candidate ||
+      "insight_responses" in candidate ||
+      "riskResponse" in candidate ||
+      "risk_response" in candidate ||
+      "currentSituation" in candidate ||
+      "current_situation" in candidate ||
+      "possibleCause" in candidate ||
+      "possible_cause" in candidate
+  )
+}
+
+function logInsightFeedMessage(
+  destination: string,
+  payload: unknown,
+  rawBody?: string
+) {
+  if (!isFeedDestination(destination) && !looksLikeInsightFeedPayload(payload)) {
+    return
+  }
+  console.log("[WS /robot/device/feed]", {
+    destination: destination.trim() || "(unknown)",
+    receivedAt: new Date().toISOString(),
+    payload,
+    rawBodyPreview:
+      typeof rawBody === "string" ? rawBody.slice(0, 1200) : undefined,
+  })
+}
 
 export function createSocket(
   onMessage: (data: unknown, meta?: { destination?: string }) => void
@@ -14,6 +70,7 @@ export function createSocket(
   const socket = new WebSocket(WS_URL, ["v12.stomp", "v11.stomp", "v10.stomp"])
 
   socket.onopen = () => {
+    console.info("[WS] opening", WS_URL)
     socket.send(
       buildFrame("CONNECT", {
         "accept-version": STOMP_ACCEPT_VERSION,
@@ -33,6 +90,8 @@ export function createSocket(
         if (!frame) continue
 
         if (frame.command === "CONNECTED") {
+          console.info("[WS] connected", WS_URL)
+          console.info("[WS] subscribe topics", WS_TOPICS)
           for (const [idx, topic] of WS_TOPICS.entries()) {
             socket.send(
               buildFrame("SUBSCRIBE", {
@@ -41,6 +100,9 @@ export function createSocket(
                 ack: "auto",
               })
             )
+            if (topic === FEED_TOPIC || topic.endsWith(FEED_TOPIC)) {
+              console.info("[WS] subscribed feed topic", topic)
+            }
           }
           continue
         }
@@ -58,14 +120,18 @@ export function createSocket(
             if (typeof parsed === "string") {
               try {
                 const nested = JSON.parse(parsed)
+                logInsightFeedMessage(destination, nested, body)
                 onMessage(nested, { destination })
               } catch {
+                logInsightFeedMessage(destination, parsed, body)
                 onMessage(parsed, { destination })
               }
             } else {
+              logInsightFeedMessage(destination, parsed, body)
               onMessage(parsed, { destination })
             }
           } catch {
+            logInsightFeedMessage(destination, body, body)
             onMessage(body, { destination })
           }
           continue
@@ -78,15 +144,20 @@ export function createSocket(
     // Backward compatibility: if backend still emits plain JSON.
     try {
       const data = JSON.parse(event.data)
+      logInsightFeedMessage("", data, event.data)
       onMessage(data, {})
     } catch {
       // Ignore non-JSON, non-STOMP payloads.
     }
   }
 
-  socket.onclose = () => {}
+  socket.onclose = (event) => {
+    console.warn("[WS] closed", event.code, event.reason || "")
+  }
 
-  socket.onerror = () => {}
+  socket.onerror = () => {
+    console.error("[WS] error", WS_URL)
+  }
 
   return socket
 }
