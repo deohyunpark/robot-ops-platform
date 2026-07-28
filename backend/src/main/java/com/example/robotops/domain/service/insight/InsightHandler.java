@@ -18,7 +18,6 @@ public class InsightHandler extends RuleHandler<DeviceInsightResponse> {
      * 추상 클래스 -> 상속받아 사용하되 Registry 재등록? 일단 handler 추상화
      */
 
-//    private final RiskLevel insightLevel;
     private final String insightTitle;
     private final String insightDescription;
     private final String insightRecommendation;
@@ -27,7 +26,6 @@ public class InsightHandler extends RuleHandler<DeviceInsightResponse> {
 
     public InsightHandler(
             Function<EventContext, Boolean> rule,
-//            Integer score,
             String insightTitle,
             String insightDescription,
             String insightRecommendation,
@@ -35,7 +33,6 @@ public class InsightHandler extends RuleHandler<DeviceInsightResponse> {
             int score
     ) {
         super(rule);
-//        this.insightLevel = insightLevel;
         this.insightTitle = insightTitle;
         this.insightDescription = insightDescription;
         this.insightRecommendation = insightRecommendation;
@@ -46,8 +43,6 @@ public class InsightHandler extends RuleHandler<DeviceInsightResponse> {
     @Override
     protected DeviceInsightResponse create(EventContext ctx) {
         return DeviceInsightResponse.of(
-                ctx.tp().robotId(),
-//                insightLevel,
                 insightTitle,
                 insightDescription,
                 insightRecommendation,

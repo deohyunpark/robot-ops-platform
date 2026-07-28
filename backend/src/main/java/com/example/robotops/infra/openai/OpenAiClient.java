@@ -44,15 +44,11 @@ public class OpenAiClient {
                                 반드시 아래 구조를 따른다.
     
                                 {
-                                  "robotId": "...",
-                                  "level": "...",
                                   "currentSituation": "...",
                                   "possibleCause": "...",
                                   "recommendation": "..."
                                 }
-    
-                                robotId은 입력값을 그대로 사용한다.
-                                level은 입력값의 deviceRiskResponse의 risklevel의 enum을 그대로 사용한다.
+                                
                                 currentSituation, possibleCause, recommendation은
                                 각각 한 문장 이내로 작성한다.
                                 """
@@ -101,11 +97,23 @@ public class OpenAiClient {
                 .message()
                 .content();
 
+
+
+
         try {
-            return objectMapper.readValue(
+            final AiSummaryResponse aiSummaryResponse = objectMapper.readValue(
                     content,
                     AiSummaryResponse.class
             );
+
+            return AiSummaryResponse.builder()
+                    .robotId(response.robotId())
+                    .Level(response.riskResponse().riskLevel().name())
+                    .currentSituation(aiSummaryResponse.currentSituation())
+                    .possibleCause(aiSummaryResponse.possibleCause())
+                    .recommendation(aiSummaryResponse.recommendation())
+                    .build();
+
         } catch (JsonProcessingException e) {
             log.error("OpenAI JSON 파싱 실패: {}", content, e);
             throw new IllegalStateException(

@@ -29,10 +29,10 @@ public class InsightAnalyzer {
         }
 
         Integer calculated = riskCalculator.calculate(requests);
-        // 생성된 DeviceInsight List kafka
+        // 생성된 AiAnalysis List kafka
 
-        return InsightFeedResponse.of(requests, DeviceRiskResponse.from(calculated));
-        // todo: InsightHandler 에서 온 DeviceInsight 를 계산 후 Insight Publisher Insight DB 저장, Redis 저장, Websocket 발행
+        return InsightFeedResponse.of(eventContext.tp().robotId(), requests, DeviceRiskResponse.from(calculated));
+        // todo: InsightHandler 에서 온 AiAnalysis 를 계산 후 Insight Publisher Insight DB 저장, Redis 저장, Websocket 발행
         // 웹소켓은 합쳐ㅓ 발행 -? gpt한테
 
 

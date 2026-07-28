@@ -19,6 +19,14 @@ public enum RedisKey {
 
     // 증가/감소 횟수
     TREND("device:%s:trend:%s"),
+
+    PENDING("ai:robot:%s:pending"),
+
+    PUBLISHED("ai:robot:%s:published"),
+
+    COOLDOWN("ai:robot:%s:cooldown"),
+
+
     ;
 
     private final String pattern;

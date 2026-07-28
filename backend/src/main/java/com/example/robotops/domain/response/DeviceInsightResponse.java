@@ -5,8 +5,6 @@ import lombok.Builder;
 
 @Builder
 public record DeviceInsightResponse(
-        String robotId,
-//        RiskLevel insightLevel,
         String insightTitle,
         String insightDescription,
         String insightRecommendation,
@@ -14,15 +12,13 @@ public record DeviceInsightResponse(
         int score
 
 ) {
-    public static DeviceInsightResponse of(String robotId,
-//                                          RiskLevel insightLevel,
-                                           String insightTitle,
+    public static DeviceInsightResponse of(
+                                            String insightTitle,
                                            String insightDescription,
                                            String insightRecommendation,
-                                           Map<String, Object> payloadType, int score) {
+                                           Map<String, Object> payloadType,
+                                            int score) {
         return DeviceInsightResponse.builder()
-                .robotId(robotId)
-//                .insightLevel(insightLevel)
                 .insightTitle(insightTitle)
                 .insightDescription(insightDescription)
                 .insightRecommendation(insightRecommendation)

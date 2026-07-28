@@ -24,32 +24,35 @@ import org.hibernate.type.SqlTypes;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
-@Table(name = "device_insight")
+@Table(name = "ai_analysis_insight")
 @Entity
-public class DeviceInsight {
+public class AiAnalysisInsight {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private long id;
 
-    @Column(name = "insight_title")
+    @Column(name = "score", nullable = false)
+    private int score;
+
+    @Column(name = "insight_title", nullable = false)
     private String insightTitle;
 
-    @Column(name = "insight_description")
+    @Column(name = "insight_description", nullable = false)
     private String insightDescription;
 
-    @Column(name = "insight_recommendation")
+    @Column(name = "insight_recommendation", nullable = false)
     private String insightRecommendation;
 
-    @Column(columnDefinition = "jsonb")
+    @Column(columnDefinition = "jsonb", nullable = false)
     @JdbcTypeCode(SqlTypes.JSON)
     private Map<String, Object> payload;
 
-    @CreationTimestamp
-    private OffsetDateTime createdAt;
-
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "device_state")
-    private DeviceState deviceState;
+    @JoinColumn(name = "ai_analysis_id", nullable = false)
+    private AiAnalysis analysis;
 
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false)
+    private OffsetDateTime createdAt;
 }

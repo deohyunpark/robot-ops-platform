@@ -2,6 +2,8 @@ package com.example.robotops.infra.redis;
 
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.request.DeviceStateRequest;
+import com.example.robotops.domain.response.DeviceInsightResponse;
+import com.example.robotops.domain.response.InsightFeedResponse;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -9,7 +11,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
@@ -296,5 +300,56 @@ public class RedisService {
             );
         }
         return result;
+    }
+
+    public String updatePending(InsightFeedResponse response) {
+        String aiFeedSignature = createAiFeedSignature(response);
+
+        stringRedisTemplate.opsForValue()
+                .set(RedisKey.PENDING.key(response.robotId()), aiFeedSignature, Duration.ofHours(24));
+
+        return aiFeedSignature;
+    }
+
+    public boolean isChangedFromPublished(InsightFeedResponse response, String currentSignature) {
+        String publishedSignature =
+                stringRedisTemplate.opsForValue()
+                        .get(RedisKey.PUBLISHED.key(response.robotId()));
+
+        return !Objects.equals(publishedSignature, currentSignature);
+    }
+
+
+    private String createAiFeedSignature(InsightFeedResponse response) {
+        String title = response.insightResponses()
+                .stream()
+                .map(DeviceInsightResponse::insightTitle)
+                .distinct()
+                .sorted()
+                .collect(Collectors.joining("|"));
+
+        String riskLevel = response.riskResponse().riskLevel().name();
+
+        return riskLevel + "|" + title;
+    }
+
+    public boolean acquireAiCoolDown(String robotId) {
+
+        String key = RedisKey.COOLDOWN.key(robotId);
+
+        Boolean acquired = stringRedisTemplate.opsForValue()
+                .setIfAbsent(
+                        key,
+                        "1",
+                        Duration.ofSeconds(60)
+                );
+
+        return Boolean.TRUE.equals(acquired);
+    }
+
+    public void deleteAiCoolDown(String robotId) {
+        String key = RedisKey.COOLDOWN.key(robotId);
+
+        stringRedisTemplate.delete(key);
     }
 }

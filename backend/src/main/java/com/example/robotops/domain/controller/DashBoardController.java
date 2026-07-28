@@ -62,7 +62,6 @@ public class DashBoardController {
         params.put("seq", 1130);
 
         DeviceInsightResponse deviceInsightResponse = DeviceInsightResponse.builder()
-                .robotId("RBT-0002")
                 .insightTitle("CPU 사용률 상승")
                 .insightDescription("CPU 사용률이 지속적으로 증가하고 있습니다.")
                 .insightRecommendation("시스템 부하를 확인하세요.")

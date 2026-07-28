@@ -4,8 +4,8 @@ import com.example.robotops.application.telemetry.request.payload.TelemetryPaylo
 import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.domain.service.event.EventContext;
 import com.example.robotops.domain.service.event.RedisSnapshotBuilder;
+import com.example.robotops.domain.service.insight.AiPublishService;
 import com.example.robotops.domain.service.insight.InsightAnalyzer;
-import com.example.robotops.infra.kafka.consumer.KafkaProducer;
 import com.example.robotops.infra.openai.AiSummaryResponse;
 import com.example.robotops.infra.openai.OpenAiClient;
 import com.example.robotops.infra.redis.JsonUtil;
@@ -24,9 +24,9 @@ public class InsightConsumer {
     private final InsightAnalyzer insightAnalyzer;
     private final RedisSnapshotBuilder redisSnapshotBuilder;
     private final WebsocketService websocketService;
-    private final KafkaProducer kafkaProducer;
 
     private final OpenAiClient openAiClient;
+    private final AiPublishService aiPublishService;
 
     @KafkaListener(topics = "robot.device.feed.detect", groupId = "all")
     public void detectInsight(String message) {
@@ -43,8 +43,7 @@ public class InsightConsumer {
 
         // 3. request DB, Redis, websocket 발행 -> kafka
         if (insightFeedResponse != null) {
-            kafkaProducer.sendInsightFeed(insightFeedResponse);
-
+            aiPublishService.publishIfNeeded(insightFeedResponse);
         }
     }
 
@@ -56,23 +55,14 @@ public class InsightConsumer {
 
     }
 
-    //todo : insight 중복 방지
-    @KafkaListener(topics = "robot.device.feed", groupId = "redis")
-    public void insertInsightRedis(String message) {
-
-        InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
-
-    }
-
-
-    @KafkaListener(topics = "robot.device.feed", groupId = "openAi")
+    @KafkaListener(topics = "robot.device.feed", groupId = "openAi", concurrency = "3")
     public void sendInsightOpenAI(String message) {
-
 
         InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
         final AiSummaryResponse request = openAiClient.request(insightFeedResponse);
-        websocketService.broadcastInsightFeed(request);
+        // todo : 여기서 병목
 
+        websocketService.broadcastInsightFeed(request);
     }
 
 

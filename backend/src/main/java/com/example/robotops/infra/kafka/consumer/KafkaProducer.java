@@ -6,8 +6,10 @@ import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.infra.redis.JsonUtil;
+import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -65,6 +67,7 @@ public class KafkaProducer {
         );
         return true;
     }
+
     public void detectMission(TelemetryPayload telemetryPayload) {
         template.send(
                 "robot.device.mission",
@@ -108,7 +111,6 @@ public class KafkaProducer {
         );
     }
 
-
     // feed 생성
     public void createInsightFeed(TelemetryPayload telemetryPayload) {
         template.send(
@@ -119,11 +121,11 @@ public class KafkaProducer {
         );
     }
 
-    //feed 저장, redis, ws, openAI
-    public void sendInsightFeed(InsightFeedResponse insightFeedResponse) {
-        template.send(
+    //feed 저장, ws, openAI
+    public CompletableFuture<SendResult<String, String>> sendInsightFeed(InsightFeedResponse insightFeedResponse) {
+        return template.send(
                 "robot.device.feed",
-                insightFeedResponse.toString(),
+                insightFeedResponse.robotId(),
                 jsonUtil.toJson(insightFeedResponse)
         );
     }
