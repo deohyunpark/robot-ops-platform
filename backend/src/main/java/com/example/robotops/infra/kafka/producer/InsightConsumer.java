@@ -1,11 +1,14 @@
 package com.example.robotops.infra.kafka.producer;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
+import com.example.robotops.domain.request.AiAnalysisRequest;
 import com.example.robotops.domain.response.InsightFeedResponse;
+import com.example.robotops.domain.service.AiAnalysisService;
+import com.example.robotops.domain.service.AiPublishService;
 import com.example.robotops.domain.service.event.EventContext;
 import com.example.robotops.domain.service.event.RedisSnapshotBuilder;
-import com.example.robotops.domain.service.insight.AiPublishService;
 import com.example.robotops.domain.service.insight.InsightAnalyzer;
+import com.example.robotops.infra.kafka.consumer.KafkaProducer;
 import com.example.robotops.infra.openai.AiSummaryResponse;
 import com.example.robotops.infra.openai.OpenAiClient;
 import com.example.robotops.infra.redis.JsonUtil;
@@ -27,6 +30,9 @@ public class InsightConsumer {
 
     private final OpenAiClient openAiClient;
     private final AiPublishService aiPublishService;
+    private final AiAnalysisService aiAnalysisService;
+
+    private final KafkaProducer kafkaProducer;
 
     @KafkaListener(topics = "robot.device.feed.detect", groupId = "all")
     public void detectInsight(String message) {
@@ -47,22 +53,32 @@ public class InsightConsumer {
         }
     }
 
-    @KafkaListener(topics = "robot.device.feed", groupId = "db")
-    public void insertInsight(String message) {
-
-        InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
-
-
-    }
 
     @KafkaListener(topics = "robot.device.feed", groupId = "openAi", concurrency = "3")
     public void sendInsightOpenAI(String message) {
 
         InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
-        final AiSummaryResponse request = openAiClient.request(insightFeedResponse);
-        // todo : 여기서 병목
+        AiSummaryResponse response = openAiClient.request(insightFeedResponse);
+        // todo : kafka 쪼개야함
 
-        websocketService.broadcastInsightFeed(request);
+        AiAnalysisRequest aiAnalysisRequest = AiAnalysisRequest.of(insightFeedResponse, response);
+        kafkaProducer.createAiAnalysis(aiAnalysisRequest);
+
+    }
+
+    @KafkaListener(topics = "robot.device.feed.analysis", groupId = "db")
+    public void saveAiAnalysis(String message) {
+
+        AiAnalysisRequest aiAnalysisRequest = jsonUtil.fromJson(message, AiAnalysisRequest.class);
+        aiAnalysisService.saveAiAnalysis(aiAnalysisRequest);
+    }
+
+    @KafkaListener(topics = "robot.device.feed.analysis", groupId = "ws")
+    public void sendAiAnalysis(String message) {
+
+        AiAnalysisRequest aiAnalysisRequest = jsonUtil.fromJson(message, AiAnalysisRequest.class);
+
+        websocketService.broadcastInsightFeed(aiAnalysisRequest.aiSummaryResponse());
     }
 
 

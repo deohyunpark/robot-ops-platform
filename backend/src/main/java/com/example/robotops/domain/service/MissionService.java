@@ -45,7 +45,7 @@ public class MissionService {
 
         current.changeMission(newMission);
 
-        missionHistoryLogRepository.save(MissionHistoryLog.of(current, oldMission, newMission, oldStartTime));
+        missionHistoryLogRepository.save(MissionHistoryLog.from(current, oldMission, newMission, oldStartTime));
 
         if (oldMission != Mission.DONE && newMission == Mission.DONE) {
             kafkaProducer.countDone(deviceId);

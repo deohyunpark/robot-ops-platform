@@ -1,5 +1,7 @@
 package com.example.robotops.domain.entity;
 
+import com.example.robotops.domain.response.DeviceInsightResponse;
+import com.example.robotops.domain.response.DeviceRiskResponse;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -16,6 +18,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -48,6 +51,7 @@ public class AiAnalysisInsight {
     @JdbcTypeCode(SqlTypes.JSON)
     private Map<String, Object> payload;
 
+    @Setter
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "ai_analysis_id", nullable = false)
     private AiAnalysis analysis;
@@ -55,4 +59,14 @@ public class AiAnalysisInsight {
     @CreationTimestamp
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
+
+    public static AiAnalysisInsight from(DeviceInsightResponse insight, DeviceRiskResponse risk) {
+        return AiAnalysisInsight.builder()
+                .score(risk.score())
+                .insightTitle(insight.insightTitle())
+                .insightDescription(insight.insightDescription())
+                .insightRecommendation(insight.insightRecommendation())
+                .payload(insight.payloadType())
+                .build();
+    }
 }

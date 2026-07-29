@@ -54,7 +54,7 @@ public class MissionHistoryLog {
     @JoinColumn(name = "mission_current_id")
     private MissionCurrent missionCurrent;
 
-    public static MissionHistoryLog of(MissionCurrent missionCurrent, Mission fromMission, Mission toMission, OffsetDateTime oldStartTime) {
+    public static MissionHistoryLog from(MissionCurrent missionCurrent, Mission fromMission, Mission toMission, OffsetDateTime oldStartTime) {
         return MissionHistoryLog.builder()
                 .deviceId(missionCurrent.getDeviceId())
                 .fromMission(fromMission)

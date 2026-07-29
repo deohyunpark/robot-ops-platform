@@ -46,10 +46,6 @@ public class DeviceEventService {
     }
 
     public List<RedisEventResponse> getOffLineDevices() {
-        List<RedisEventResponse> list = getAllDeviceEvents().stream().filter(
-                event -> StringEnum.from(EventType.class, event.eventName()) == EventType.OFFLINE
-        ).toList();
-
 
         return getAllDeviceEvents().stream().filter(
                 event -> StringEnum.from(EventType.class, event.eventName()) == EventType.OFFLINE

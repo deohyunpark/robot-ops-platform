@@ -3,6 +3,7 @@ package com.example.robotops.infra.kafka.consumer;
 import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
 import com.example.robotops.domain.entity.DeviceEvent;
+import com.example.robotops.domain.request.AiAnalysisRequest;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.infra.redis.JsonUtil;
@@ -127,6 +128,14 @@ public class KafkaProducer {
                 "robot.device.feed",
                 insightFeedResponse.robotId(),
                 jsonUtil.toJson(insightFeedResponse)
+        );
+    }
+
+    public void createAiAnalysis(AiAnalysisRequest aiAnalysisRequest) {
+        template.send(
+                "robot.device.feed.analysis",
+                aiAnalysisRequest.insightFeedResponse().robotId(),
+                jsonUtil.toJson(aiAnalysisRequest)
         );
     }
 }

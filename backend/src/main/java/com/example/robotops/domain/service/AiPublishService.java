@@ -1,4 +1,4 @@
-package com.example.robotops.domain.service.insight;
+package com.example.robotops.domain.service;
 
 import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.infra.kafka.consumer.KafkaProducer;
