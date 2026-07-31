@@ -51,6 +51,8 @@ dependencies {
 
 	implementation "org.springframework.ai:spring-ai-starter-model-openai"
 
+
+	testRuntimeOnly 'com.h2database:h2'
 }
 
 tasks.named('test') {
