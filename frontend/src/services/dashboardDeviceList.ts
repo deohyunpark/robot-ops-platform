@@ -1,15 +1,8 @@
+import { API_BASE_URL } from "./apiBaseUrl"
+
 /**
  * GET /v1/dashboard/device-list → List<DeviceResponse>
- *
- * Base URL: same rules as `dashboardUtilization.ts`.
  */
-function apiBaseUrl(): string {
-  const explicit = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
-  if (explicit) return explicit.replace(/\/$/, "")
-  if (import.meta.env.DEV) return ""
-  return "http://localhost:8080"
-}
-
 function normalizeDeviceId(raw: Record<string, unknown>): string | null {
   const id =
     (typeof raw.id === "string" && raw.id.trim()) ||
@@ -50,8 +43,7 @@ function extractDeviceListIds(payload: unknown): string[] {
 export async function fetchDashboardDeviceList(
   signal?: AbortSignal
 ): Promise<string[]> {
-  const base = apiBaseUrl()
-  const url = `${base}/v1/dashboard/device-list`
+  const url = `${API_BASE_URL}/v1/dashboard/device-list`
   const res = await fetch(url, {
     method: "GET",
     headers: { Accept: "application/json" },

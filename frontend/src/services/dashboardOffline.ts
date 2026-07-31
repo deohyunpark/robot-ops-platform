@@ -1,23 +1,14 @@
 import { offlineEventBatchFromPayload } from "../components/robotics-monitoring/telemetryAdapter"
 import type { RedisEventResponse } from "../components/robotics-monitoring/telemetryAdapter"
+import { API_BASE_URL } from "./apiBaseUrl"
 
 /**
  * GET /v1/dashboard/offline → List<RedisEventResponse>
- *
- * Base URL: same rules as `dashboardUtilization.ts`.
  */
-function apiBaseUrl(): string {
-  const explicit = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
-  if (explicit) return explicit.replace(/\/$/, "")
-  if (import.meta.env.DEV) return ""
-  return "http://localhost:8080"
-}
-
 export async function fetchDashboardOffline(
   signal?: AbortSignal
 ): Promise<RedisEventResponse[]> {
-  const base = apiBaseUrl()
-  const url = `${base}/v1/dashboard/offline`
+  const url = `${API_BASE_URL}/v1/dashboard/offline`
   const res = await fetch(url, {
     method: "GET",
     headers: { Accept: "application/json" },

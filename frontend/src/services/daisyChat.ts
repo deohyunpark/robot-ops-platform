@@ -1,6 +1,7 @@
 /**
  * POST /api/daisy/chat
  */
+import { API_BASE_URL } from "./apiBaseUrl"
 import { normalizeDaisyAnswer } from "./daisyChatFormat"
 
 export type DaisyChatErrorKind = "network" | "server" | "client" | "empty" | "unknown"
@@ -59,13 +60,6 @@ function resolveDaisyChatErrorKind(err: unknown): DaisyChatErrorKind {
   return "unknown"
 }
 
-function apiBaseUrl(): string {
-  const explicit = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
-  if (explicit) return explicit.replace(/\/$/, "")
-  if (import.meta.env.DEV) return ""
-  return "http://localhost:8080"
-}
-
 export type DaisyChatResponse = {
   answer: string
 }
@@ -79,8 +73,7 @@ export async function postDaisyChat(
     throw new DaisyChatError("client")
   }
 
-  const base = apiBaseUrl()
-  const url = `${base}/api/daisy/chat`
+  const url = `${API_BASE_URL}/api/daisy/chat`
 
   let res: Response
   try {

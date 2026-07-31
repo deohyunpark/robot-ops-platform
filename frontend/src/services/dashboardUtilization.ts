@@ -1,18 +1,8 @@
+import { API_BASE_URL } from "./apiBaseUrl"
+
 /**
  * GET /v1/dashboard/utilization
- *
- * Base URL:
- * - `VITE_API_BASE_URL` if set (no trailing slash)
- * - In Vite dev: same-origin + `/v1` proxy → backend (see vite.config.ts)
- * - Production build without env: http://localhost:8080
  */
-function apiBaseUrl(): string {
-  const explicit = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
-  if (explicit) return explicit.replace(/\/$/, "")
-  if (import.meta.env.DEV) return ""
-  return "http://localhost:8080"
-}
-
 export type UtilizationRowDto = {
   deviceId: string
   bucketTime: number
@@ -131,8 +121,7 @@ export function aggregateUtilizationByDevice(
 export async function fetchDashboardUtilization(
   signal?: AbortSignal
 ): Promise<DeviceUtilization[]> {
-  const base = apiBaseUrl()
-  const url = `${base}/v1/dashboard/utilization`
+  const url = `${API_BASE_URL}/v1/dashboard/utilization`
   const res = await fetch(url, {
     method: "GET",
     headers: { Accept: "application/json" },

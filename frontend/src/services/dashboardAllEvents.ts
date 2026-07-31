@@ -3,24 +3,15 @@ import {
   filterCriticalEventRows,
 } from "../components/robotics-monitoring/telemetryAdapter"
 import type { DeviceEventFeedRow } from "../components/robotics-monitoring/telemetryAdapter"
+import { API_BASE_URL } from "./apiBaseUrl"
 
 /**
  * GET /v1/dashboard/all-events → List<RedisEventResponse> (eventName = eventType)
- *
- * Base URL: same rules as `dashboardUtilization.ts`.
  */
-function apiBaseUrl(): string {
-  const explicit = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
-  if (explicit) return explicit.replace(/\/$/, "")
-  if (import.meta.env.DEV) return ""
-  return "http://localhost:8080"
-}
-
 export async function fetchDashboardAllEvents(
   signal?: AbortSignal
 ): Promise<DeviceEventFeedRow[]> {
-  const base = apiBaseUrl()
-  const url = `${base}/v1/dashboard/all-events`
+  const url = `${API_BASE_URL}/v1/dashboard/all-events`
   const res = await fetch(url, {
     method: "GET",
     headers: { Accept: "application/json" },
