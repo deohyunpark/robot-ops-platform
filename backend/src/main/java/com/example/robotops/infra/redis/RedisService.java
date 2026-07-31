@@ -341,7 +341,7 @@ public class RedisService {
                 .setIfAbsent(
                         key,
                         "1",
-                        Duration.ofSeconds(60)
+                        Duration.ofSeconds(500)
                 );
 
         return Boolean.TRUE.equals(acquired);
