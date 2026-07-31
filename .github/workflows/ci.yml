@@ -88,10 +88,6 @@ jobs:
           pg_isready -h localhost -p 5432 -U app -d robotops
           psql -h localhost -p 5432 -U app -d robotops -c "SELECT version();"
 
-      - name: Check Redis
-        run: |
-          redis-cli -h localhost -p 6379 ping
-
       - name: Run backend tests
         run: ./gradlew clean test --stacktrace --info
 
