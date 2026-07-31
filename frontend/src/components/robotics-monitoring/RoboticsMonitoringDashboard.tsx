@@ -7,9 +7,12 @@ import {
   useState,
 } from "react"
 import { createSocket } from "../../services/ws"
+import { getDaisyChatUserMessage, postDaisyChat } from "../../services/daisyChat"
+import { DaisyChatInsertHint } from "./DaisyChatInsertHint"
+import { DaisyChatMessageBody } from "./DaisyChatMessageBody"
+import { DaisyChatTypingIndicator } from "./DaisyChatTypingIndicator"
 import {
   fetchDashboardAllEvents,
-  fetchDashboardCriticalOutageEvents,
 } from "../../services/dashboardAllEvents"
 import { fetchDashboardDeviceList } from "../../services/dashboardDeviceList"
 import { fetchDashboardOffline } from "../../services/dashboardOffline"
@@ -19,6 +22,10 @@ import {
 } from "../../services/dashboardUtilization"
 import { EventDetailModal } from "./EventDetailModal"
 import { InsightFeedPanel } from "./InsightFeedPanel"
+import {
+  InsightFeedRobotHoverPopover,
+  type InsightFeedHoverAnchor,
+} from "./InsightFeedRobotHoverPopover"
 import { useDeviceTableRenderer } from "./DashboardDeviceTable"
 import {
   defaultAckState,
@@ -39,15 +46,17 @@ import type {
   RoboticsMonitoringDashboardProps,
 } from "./roboticsMonitoringDashboardTypes"
 import {
-  deviceEventsFeedFromPayload,
-  eventBatchFromPayload,
+  deviceEventFeedRowToBackendEvent,
+  filterCriticalEventRows,
+  fleetEventRowsFromPayload,
   groupInsightFeedByRobot,
   insightFeedItemsFromPayload,
   isInsightFeedPayload,
   isInsightFeedStompDestination,
+  mergeLatestFleetEventsByDevice,
   mergeInsightFeedItems,
   offlineEventBatchFromPayload,
-  resolveEventDeviceId,
+  redisOfflineEventToFeedRow,
   telemetryBatchToDevices,
   throughputFromPayload,
   totalUtilizationFromPayload,
@@ -120,11 +129,6 @@ function outageSeveritySection(severity: string): (typeof OUTAGE_SEVERITY_SECTIO
   return "UNKNOWN"
 }
 
-function isDeviceEventsStompDestination(destination?: string): boolean {
-  const d = (destination ?? "").trim()
-  return d === "/robot/device/events" || d.endsWith("/robot/device/events")
-}
-
 function isOfflineStompDestination(destination?: string): boolean {
   const d = (destination ?? "").trim()
   return d === "/robot/device/offline" || d.endsWith("/robot/device/offline")
@@ -142,6 +146,19 @@ function fleetDeviceStub(id: string, status: DeviceStatus): Device {
     lastSeenMinutes: 0,
     emergency: false,
     errorRate: 0,
+  }
+}
+
+function deviceWithLatestFleetEvent(
+  d: Device,
+  events: Record<string, DeviceEventFeedRow>
+): Device {
+  const row = events[d.id]
+  if (!row) return d
+  return {
+    ...d,
+    lastEventType: row.eventType,
+    lastEventSeverity: row.severity,
   }
 }
 
@@ -239,12 +256,19 @@ export default function RoboticsMonitoringDashboard(
   >([])
   const [dashboardAllEventsBootstrapped, setDashboardAllEventsBootstrapped] =
     useState(false)
+  /** 장비별 최신 이벤트 — API 초기값 + WS 실시간 통합 */
+  const [latestFleetEventsByDevice, setLatestFleetEventsByDevice] = useState<
+    Record<string, DeviceEventFeedRow>
+  >({})
   const [chatOpen, setChatOpen] = useState(false)
   const [chatInput, setChatInput] = useState("")
+  const [chatSending, setChatSending] = useState(false)
   const [rightTab, setRightTab] = useState<"fleetMap" | "insightFeed" | "chat">(
     "fleetMap"
   )
   const [insightFeedItems, setInsightFeedItems] = useState<InsightFeedItem[]>([])
+  const [insightHoverAnchor, setInsightHoverAnchor] =
+    useState<InsightFeedHoverAnchor | null>(null)
   const [dismissedInsightRobotIds, setDismissedInsightRobotIds] = useState<
     Set<string>
   >(() => new Set())
@@ -285,8 +309,57 @@ export default function RoboticsMonitoringDashboard(
   const [wsConnected, setWsConnected] = useState(false)
   const [lastWsMessageAt, setLastWsMessageAt] = useState<string>("")
   const socketRef = useRef<WebSocket | null>(null)
+  const chatAbortRef = useRef<AbortController | null>(null)
+  const chatInputRef = useRef<HTMLInputElement | null>(null)
+  const chatInputFocusedRef = useRef(false)
+  const [chatInputFocused, setChatInputFocused] = useState(false)
   const fleetHoverCloseTimerRef = useRef<number | null>(null)
   const deviceSource = useMemo(() => liveDevices ?? [], [liveDevices])
+
+  const ingestFleetEventRows = useCallback((rows: DeviceEventFeedRow[]) => {
+    if (!rows.length) return
+    startTransition(() => {
+      setLatestFleetEventsByDevice((prev) =>
+        mergeLatestFleetEventsByDevice(prev, rows)
+      )
+      setDeviceEvents((prev) => {
+        const next = { ...prev }
+        for (const row of rows) {
+          const list = next[row.deviceId] ?? []
+          next[row.deviceId] = [
+            ...list,
+            deviceEventFeedRowToBackendEvent(row),
+          ].slice(-30)
+        }
+        return next
+      })
+      setLiveDevices((prev) => {
+        const byId = new Map((prev ?? []).map((d) => [d.id, d]))
+        for (const row of rows) {
+          const patch = {
+            lastEventType: row.eventType,
+            lastEventSeverity: row.severity,
+          }
+          const old = byId.get(row.deviceId)
+          byId.set(
+            row.deviceId,
+            old
+              ? { ...old, ...patch }
+              : { ...fleetDeviceStub(row.deviceId, "Online"), ...patch }
+          )
+        }
+        return Array.from(byId.values())
+      })
+      const critical = rows.filter(
+        (row) => row.severity.toUpperCase() === "CRITICAL"
+      )
+      if (critical.length) {
+        setDashboardCriticalOutageRows((prev) =>
+          mergeOutageEventRows(prev, critical)
+        )
+      }
+    })
+  }, [])
 
   const applyOfflineDeviceIds = useCallback(
     (ids: Iterable<string>, mode: "merge" | "replace" = "merge") => {
@@ -352,71 +425,15 @@ export default function RoboticsMonitoringDashboard(
         )
       }
 
-      const events = eventBatchFromPayload(payload)
-      if (events.length) {
-        startTransition(() =>
-          setDeviceEvents((prev) => {
-            const next = { ...prev }
-            for (const ev of events) {
-              const deviceId = resolveEventDeviceId(ev)
-              if (!deviceId) continue
-              const list = next[deviceId] ?? []
-              next[deviceId] = [...list, ev].slice(-30)
-            }
-            return next
-          })
-        )
-        startTransition(() =>
-          setLiveDevices((prev) => {
-            const base = prev ?? []
-            if (!base.length) return base
-            const byId = new Map(base.map((d) => [d.id, d]))
-            for (const ev of events) {
-              const deviceId = resolveEventDeviceId(ev)
-              if (!deviceId) continue
-              const old = byId.get(deviceId)
-              if (!old) continue
-              byId.set(deviceId, {
-                ...old,
-                lastEventType: ev.eventType,
-                lastEventSeverity: ev.severity,
-              })
-            }
-            return Array.from(byId.values())
-          })
-        )
-      }
-
-      if (
-        isDeviceEventsStompDestination(meta?.destination) &&
-        (outageModalOpenRef.current || eventDetailOpenRef.current)
-      ) {
-        const feedRows = deviceEventsFeedFromPayload(payload)
-        if (feedRows.length) {
-          if (outageModalOpenRef.current) {
-            startTransition(() =>
-              setOutageModalEventRows((prev) => mergeOutageEventRows(prev, feedRows))
+      const fleetEventRows = fleetEventRowsFromPayload(payload)
+      if (fleetEventRows.length) {
+        ingestFleetEventRows(fleetEventRows)
+        if (outageModalOpenRef.current) {
+          startTransition(() =>
+            setOutageModalEventRows((prev) =>
+              mergeOutageEventRows(prev, fleetEventRows)
             )
-          }
-          if (eventDetailOpenRef.current) {
-            startTransition(() =>
-              setDeviceEvents((prev) => {
-                const next = { ...prev }
-                for (const row of feedRows) {
-                  const list = next[row.deviceId] ?? []
-                  const pseudo: BackendDeviceEvent = {
-                    id: null,
-                    deviceId: row.deviceId,
-                    eventType: row.eventType,
-                    severity: row.severity,
-                    createdAt: row.ts,
-                  }
-                  next[row.deviceId] = [...list, pseudo].slice(-30)
-                }
-                return next
-              })
-            )
-          }
+          )
         }
       }
 
@@ -436,6 +453,9 @@ export default function RoboticsMonitoringDashboard(
           applyOfflineDeviceIds(
             offlineEvents.map((e) => e.deviceId),
             "merge"
+          )
+          ingestFleetEventRows(
+            offlineEvents.map((event) => redisOfflineEventToFeedRow(event))
           )
         }
       }
@@ -469,7 +489,7 @@ export default function RoboticsMonitoringDashboard(
       socketRef.current = null
       setWsConnected(false)
     }
-  }, [])
+  }, [ingestFleetEventRows, applyOfflineDeviceIds])
 
   const ui = useMemo(() => {
     const ko = language === "ko"
@@ -481,6 +501,10 @@ export default function RoboticsMonitoringDashboard(
       tabFleetMap: ko ? "전체 장비 위치" : "Fleet Positions",
       tabInsightFeed: ko ? "인사이트 피드" : "Insight Feed",
       tabChat: "Daisy Assistant",
+      chatInsertHint: ko
+        ? "플릿 개요의 로봇 이름을 클릭하면 빠른 태그가 가능합니다."
+        : "Click robot names in Fleet Overview to insert quick tags.",
+      chatInsertFleetPointer: ko ? "← 왼쪽 플릿 개요에서 선택" : "← Select from Fleet Overview on the left",
       mapTagDefault: ko ? "기본" : "Default",
       mapTagMission: ko ? "상태" : "Status",
       mapTagEvent: ko ? "이벤트" : "Event",
@@ -546,6 +570,7 @@ export default function RoboticsMonitoringDashboard(
         : "Search devices, sites, model, status…",
       clear: ko ? "지우기" : "Clear",
       fleetOverview: ko ? "플릿 개요" : "Fleet Overview",
+      fleetColEvent: ko ? "이벤트" : "Event",
       fleetMapTitle: ko ? "전체 장비 위치" : "Fleet Positions",
       fleetMapHint: ko ? "x / y / theta 기반 실시간 배치" : "Live layout from x / y / theta",
       noPoseData: ko ? "좌표 데이터 없음" : "No pose data",
@@ -693,10 +718,38 @@ export default function RoboticsMonitoringDashboard(
     abnormalTempThreshold,
   ])
 
+  const fleetTableDevices = useMemo(
+    () =>
+      filteredDevices.map((d) =>
+        deviceWithLatestFleetEvent(d, latestFleetEventsByDevice)
+      ),
+    [filteredDevices, latestFleetEventsByDevice]
+  )
+
   const selected = useMemo(() => {
-    const found = derivedDevices.find((d) => d.id === selectedId)
-    return found ?? filteredDevices[0] ?? derivedDevices[0] ?? null
-  }, [derivedDevices, filteredDevices, selectedId])
+    if (selectedId) {
+      const found = derivedDevices.find((d) => d.id === selectedId)
+      if (found) return found
+      const offline = wsOfflineDeviceIds.includes(selectedId)
+      return fleetDeviceStub(selectedId, offline ? "Offline" : "Online")
+    }
+    return filteredDevices[0] ?? derivedDevices[0] ?? null
+  }, [derivedDevices, filteredDevices, selectedId, wsOfflineDeviceIds])
+
+  const insightHoverDevice = useMemo(() => {
+    if (!insightHoverAnchor) return null
+    const robotId = insightHoverAnchor.robotId
+    const live = derivedDevices.find((d) => d.id === robotId)
+    if (live) return live
+    const offline = wsOfflineDeviceIds.includes(robotId)
+    return fleetDeviceStub(robotId, offline ? "Offline" : "Online")
+  }, [insightHoverAnchor, derivedDevices, wsOfflineDeviceIds])
+
+  useEffect(() => {
+    if (rightTab !== "insightFeed" && insightHoverAnchor) {
+      setInsightHoverAnchor(null)
+    }
+  }, [rightTab, insightHoverAnchor])
 
   useEffect(() => {
     if (!selected) return
@@ -941,12 +994,50 @@ export default function RoboticsMonitoringDashboard(
     [textSecondary]
   )
 
-  const onSelect = useCallback((id: string) => {
+  const openRobotDetail = useCallback((id: string) => {
     startTransition(() => {
       setSelectedId(id)
       setModalOpen(true)
     })
   }, [])
+
+  const onSelect = useCallback((id: string) => {
+    if (chatInputFocusedRef.current) {
+      const device = derivedDevices.find((d) => d.id === id)
+      const token = device?.id ?? id
+      const input = chatInputRef.current
+
+      if (!input) {
+        setChatInput((prev) => {
+          const trimmed = prev.trim()
+          return trimmed ? `${trimmed} ${token}` : token
+        })
+        return
+      }
+
+      const start = input.selectionStart ?? input.value.length
+      const end = input.selectionEnd ?? input.value.length
+      const before = input.value.slice(0, start)
+      const after = input.value.slice(end)
+      const prefix = before.length > 0 && !/\s$/.test(before) ? " " : ""
+      const suffix = after.length > 0 && !/^\s/.test(after) ? " " : ""
+      const insert = `${prefix}${token}${suffix}`
+      const next = before + insert + after
+      setChatInput(next)
+
+      const caret = before.length + insert.length
+      requestAnimationFrame(() => {
+        input.focus()
+        input.setSelectionRange(caret, caret)
+      })
+      return
+    }
+
+    startTransition(() => {
+      setSelectedId(id)
+      setModalOpen(true)
+    })
+  }, [derivedDevices])
 
   const eventDetailDevice = useMemo(() => {
     if (!selectedOutageEvent) return null
@@ -1084,37 +1175,54 @@ export default function RoboticsMonitoringDashboard(
     startTransition(() => setChatOpen(false))
   }, [])
 
-  const sendChat = useCallback(() => {
+  const sendChat = useCallback(async () => {
     const text = chatInput.trim()
-    if (!text) return
-    const now = new Date()
-    const ts = now.toLocaleTimeString([], {
+    if (!text || chatSending) return
+
+    const ts = new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     })
-    startTransition(() => {
-      setChatMessages((m) => [...m, { role: "user", text, ts }])
-      setChatInput("")
-    })
 
-    const reply =
-      language === "ko"
-        ? "(데모) 오프라인 장비 요약, 에러율 상위 장비 등 질문에 답할 수 있어요."
-        : "(Demo) Try asking for offline summaries or top error-rate units."
+    setChatMessages((m) => [...m, { role: "user", text, ts }])
+    setChatInput("")
+    setChatSending(true)
 
-    const ts2 = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-    window.setTimeout(() => {
-      startTransition(() => {
-        setChatMessages((m) => [
-          ...m,
-          { role: "assistant", text: reply, ts: ts2 },
-        ])
+    chatAbortRef.current?.abort()
+    const controller = new AbortController()
+    chatAbortRef.current = controller
+
+    try {
+      const answer = await postDaisyChat(text, controller.signal)
+      const replyTs = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
       })
-    }, 250)
-  }, [chatInput, language])
+      setChatMessages((m) => [
+        ...m,
+        { role: "assistant", text: answer, ts: replyTs },
+      ])
+    } catch (err) {
+      if (controller.signal.aborted) return
+      const replyTs = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+      const errorText = getDaisyChatUserMessage(
+        err,
+        language === "ko" ? "ko" : "en"
+      )
+      setChatMessages((m) => [
+        ...m,
+        { role: "assistant", text: errorText, ts: replyTs },
+      ])
+    } finally {
+      if (chatAbortRef.current === controller) {
+        chatAbortRef.current = null
+      }
+      setChatSending(false)
+    }
+  }, [chatInput, chatSending, language])
 
   const visibleInsightFeedItems = useMemo(
     () =>
@@ -1130,13 +1238,34 @@ export default function RoboticsMonitoringDashboard(
   )
 
   const dismissInsightFeedRobot = useCallback((robotId: string) => {
-    startTransition(() =>
+    startTransition(() => {
       setDismissedInsightRobotIds((prev) => {
         const next = new Set(prev)
         next.add(robotId)
         return next
       })
-    )
+      if (insightHoverAnchor?.robotId === robotId) {
+        setInsightHoverAnchor(null)
+      }
+    })
+  }, [insightHoverAnchor])
+
+  const handleInsightRobotHover = useCallback((anchor: InsightFeedHoverAnchor | null) => {
+    setInsightHoverAnchor(anchor)
+  }, [])
+
+  const handleChatInputFocus = useCallback(() => {
+    chatInputFocusedRef.current = true
+    setChatInputFocused(true)
+  }, [])
+
+  const handleChatInputBlur = useCallback(() => {
+    chatInputFocusedRef.current = false
+    setChatInputFocused(false)
+  }, [])
+
+  const bindChatInputRef = useCallback((el: HTMLInputElement | null) => {
+    chatInputRef.current = el
   }, [])
 
   const renderTable = useDeviceTableRenderer({
@@ -1145,6 +1274,7 @@ export default function RoboticsMonitoringDashboard(
     borderColor,
     bodyFont,
     cardBackground,
+    chatInsertActive: chatInputFocused,
     lowBatteryThreshold,
     monoFont,
     onSelect,
@@ -1641,13 +1771,20 @@ export default function RoboticsMonitoringDashboard(
     Promise.all([
       fetchDashboardDeviceList(ac.signal),
       fetchDashboardOffline(ac.signal).catch(() => []),
-      fetchDashboardCriticalOutageEvents(ac.signal).catch(() => []),
+      fetchDashboardAllEvents(ac.signal).catch(() => []),
     ])
-      .then(([ids, offlineEvents, criticalOutageRows]) => {
+      .then(([ids, offlineEvents, allEventRows]) => {
         if (ac.signal.aborted) return
         const offlineIds = offlineEvents
           .map((e) => e.deviceId)
           .filter((id): id is string => Boolean(id))
+        const offlineFeedRows = offlineEvents.map((event) =>
+          redisOfflineEventToFeedRow(event)
+        )
+        const mergedFleetEvents = mergeLatestFleetEventsByDevice(
+          mergeLatestFleetEventsByDevice({}, allEventRows),
+          offlineFeedRows
+        )
         startTransition(() => {
           setDashboardDeviceIds(ids)
           setDashboardDeviceListReady(true)
@@ -1658,12 +1795,16 @@ export default function RoboticsMonitoringDashboard(
             Array.from(offlineSet).sort((a, b) => a.localeCompare(b))
           )
           setDashboardOfflineBootstrapped(true)
-          setDashboardCriticalOutageRows(criticalOutageRows)
+          setLatestFleetEventsByDevice(mergedFleetEvents)
+          setDashboardCriticalOutageRows(filterCriticalEventRows(allEventRows))
           setDashboardAllEventsBootstrapped(true)
           setLiveDevices((prev) => {
-            const base = prev ?? []
-            if (!base.length) return base
-            const byId = new Map(base.map((d) => [d.id, d]))
+            const byId = new Map((prev ?? []).map((d) => [d.id, d]))
+            for (const id of ids) {
+              if (!byId.has(id)) {
+                byId.set(id, fleetDeviceStub(id, "Online"))
+              }
+            }
             const now = new Date().toISOString()
             for (const id of offlineSet) {
               const old = byId.get(id)
@@ -1675,6 +1816,19 @@ export default function RoboticsMonitoringDashboard(
                 lastSeenAt: now,
                 updatedAt: now,
               })
+            }
+            for (const row of Object.values(mergedFleetEvents)) {
+              const old = byId.get(row.deviceId)
+              const patch = {
+                lastEventType: row.eventType,
+                lastEventSeverity: row.severity,
+              }
+              byId.set(
+                row.deviceId,
+                old
+                  ? { ...old, ...patch }
+                  : { ...fleetDeviceStub(row.deviceId, "Online"), ...patch }
+              )
             }
             return Array.from(byId.values())
           })
@@ -1690,6 +1844,7 @@ export default function RoboticsMonitoringDashboard(
         setDashboardDeviceListLoading(false)
         setDashboardOfflineBootstrapped(true)
         setDashboardCriticalOutageRows([])
+        setLatestFleetEventsByDevice({})
         setDashboardAllEventsBootstrapped(true)
       })
 
@@ -2076,7 +2231,7 @@ export default function RoboticsMonitoringDashboard(
               }}
             >
               {!groupBySite ? (
-                renderTable(filteredDevices)
+                renderTable(fleetTableDevices)
               ) : (
                 <div
                   style={{
@@ -2163,7 +2318,11 @@ export default function RoboticsMonitoringDashboard(
                           />
                         </div>
                       </div>
-                      {renderTable(g.devices)}
+                      {renderTable(
+                        g.devices.map((d) =>
+                          deviceWithLatestFleetEvent(d, latestFleetEventsByDevice)
+                        )
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2881,6 +3040,8 @@ export default function RoboticsMonitoringDashboard(
                   bodyFont={bodyFont}
                   monoFont={monoFont}
                   onDismissRobot={dismissInsightFeedRobot}
+                  onRobotHoverChange={handleInsightRobotHover}
+                  onRobotSelect={openRobotDetail}
                 />
               ) : (
                 <div
@@ -2922,16 +3083,19 @@ export default function RoboticsMonitoringDashboard(
                               color: textPrimary,
                             }}
                           >
-                            <div
-                              style={{
-                                ...bodyFont,
-                                fontSize: coerceFontSize(bodyFont?.fontSize, 13),
-                                lineHeight: bodyFont?.lineHeight ?? "1.35em",
-                                letterSpacing: bodyFont?.letterSpacing ?? "-0.01em",
-                              }}
-                            >
-                              {m.text}
-                            </div>
+                            <DaisyChatMessageBody
+                              text={m.text}
+                              role={m.role}
+                              bodyFont={bodyFont}
+                              monoFont={monoFont}
+                              textPrimary={textPrimary}
+                              textSecondary={textSecondary}
+                              borderColor={borderColor}
+                              cardBackground={cardBackground}
+                              statusError={statusError}
+                              statusWarning={statusWarning}
+                              accent={accent}
+                            />
                             <div
                               style={{
                                 marginTop: 6,
@@ -2948,14 +3112,38 @@ export default function RoboticsMonitoringDashboard(
                         </div>
                       )
                     })}
+                    {chatSending ? (
+                      <DaisyChatTypingIndicator
+                        borderColor={borderColor}
+                        cardBackground={cardBackground}
+                        accent={accent}
+                      />
+                    ) : null}
                   </div>
 
-                  <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {chatInputFocused ? (
+                      <DaisyChatInsertHint
+                        text={ui.chatInsertHint}
+                        fleetPointer={ui.chatInsertFleetPointer}
+                        bodyFont={bodyFont}
+                        textPrimary={textPrimary}
+                        textSecondary={textSecondary}
+                        accent={accent}
+                        cardBackground={cardBackground}
+                      />
+                    ) : null}
+                    <div style={{ display: "flex", gap: 10 }}>
                     <input
+                      ref={bindChatInputRef}
                       value={chatInput}
-                      onChange={(e) => startTransition(() => setChatInput(e.target.value))}
+                      disabled={chatSending}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onFocus={handleChatInputFocus}
+                      onBlur={handleChatInputBlur}
                       placeholder={chatPlaceholder}
                       aria-label={ui.chat}
+                      aria-busy={chatSending}
                       style={{
                         flex: 1,
                         border: `1px solid ${borderColor}`,
@@ -2968,16 +3156,18 @@ export default function RoboticsMonitoringDashboard(
                         fontSize: coerceFontSize(bodyFont?.fontSize, 14),
                       }}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !chatSending) {
                           e.preventDefault()
-                          sendChat()
+                          void sendChat()
                         }
                       }}
                     />
                     <button
                       type="button"
-                      onClick={sendChat}
+                      onClick={() => void sendChat()}
+                      disabled={chatSending || !chatInput.trim()}
                       aria-label={ui.send}
+                      aria-busy={chatSending}
                       style={{
                         border: `1px solid ${withAlpha(accent, 0.35)}`,
                         background: withAlpha(accent, 0.18),
@@ -2992,6 +3182,7 @@ export default function RoboticsMonitoringDashboard(
                     >
                       {ui.send}
                     </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -3002,7 +3193,7 @@ export default function RoboticsMonitoringDashboard(
         {modalOpen && selected ? (
           <div
             style={{
-              position: "absolute",
+              position: "fixed",
               inset: 0,
               zIndex: 50,
               display: "flex",
@@ -5289,16 +5480,19 @@ export default function RoboticsMonitoringDashboard(
                           color: textPrimary,
                         }}
                       >
-                        <div
-                          style={{
-                            ...bodyFont,
-                            fontSize: coerceFontSize(bodyFont?.fontSize, 13),
-                            lineHeight: bodyFont?.lineHeight ?? "1.35em",
-                            letterSpacing: bodyFont?.letterSpacing ?? "-0.01em",
-                          }}
-                        >
-                          {m.text}
-                        </div>
+                        <DaisyChatMessageBody
+                          text={m.text}
+                          role={m.role}
+                          bodyFont={bodyFont}
+                          monoFont={monoFont}
+                          textPrimary={textPrimary}
+                          textSecondary={textSecondary}
+                          borderColor={borderColor}
+                          cardBackground={cardBackground}
+                          statusError={statusError}
+                          statusWarning={statusWarning}
+                          accent={accent}
+                        />
                         <div
                           style={{
                             marginTop: 6,
@@ -5315,6 +5509,13 @@ export default function RoboticsMonitoringDashboard(
                     </div>
                   )
                 })}
+                {chatSending ? (
+                  <DaisyChatTypingIndicator
+                    borderColor={borderColor}
+                    cardBackground={cardBackground}
+                    accent={accent}
+                  />
+                ) : null}
               </div>
 
               <div
@@ -5322,16 +5523,32 @@ export default function RoboticsMonitoringDashboard(
                   padding: 12,
                   borderTop: `1px solid ${borderColor}`,
                   display: "flex",
+                  flexDirection: "column",
                   gap: 10,
                 }}
               >
+                {chatInputFocused ? (
+                  <DaisyChatInsertHint
+                    text={ui.chatInsertHint}
+                    fleetPointer={ui.chatInsertFleetPointer}
+                    bodyFont={bodyFont}
+                    textPrimary={textPrimary}
+                    textSecondary={textSecondary}
+                    accent={accent}
+                    cardBackground={cardBackground}
+                  />
+                ) : null}
+                <div style={{ display: "flex", gap: 10 }}>
                 <input
+                  ref={bindChatInputRef}
                   value={chatInput}
-                  onChange={(e) =>
-                    startTransition(() => setChatInput(e.target.value))
-                  }
+                  disabled={chatSending}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onFocus={handleChatInputFocus}
+                  onBlur={handleChatInputBlur}
                   placeholder={chatPlaceholder}
                   aria-label={ui.chat}
+                  aria-busy={chatSending}
                   style={{
                     flex: 1,
                     border: `1px solid ${borderColor}`,
@@ -5344,9 +5561,9 @@ export default function RoboticsMonitoringDashboard(
                     fontSize: coerceFontSize(bodyFont?.fontSize, 14),
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") {
+                    if (e.key === "Enter" && !chatSending) {
                       e.preventDefault()
-                      sendChat()
+                      void sendChat()
                     }
                     if (e.key === "Escape") {
                       e.preventDefault()
@@ -5356,8 +5573,10 @@ export default function RoboticsMonitoringDashboard(
                 />
                 <button
                   type="button"
-                  onClick={sendChat}
+                  onClick={() => void sendChat()}
+                  disabled={chatSending || !chatInput.trim()}
                   aria-label={ui.send}
+                  aria-busy={chatSending}
                   style={{
                     border: `1px solid ${withAlpha(accent, 0.35)}`,
                     background: withAlpha(accent, 0.18),
@@ -5372,11 +5591,39 @@ export default function RoboticsMonitoringDashboard(
                 >
                   {ui.send}
                 </button>
+                </div>
               </div>
             </div>
           </div>
         ) : null}
       </main>
+
+      {rightTab === "insightFeed" && insightHoverAnchor && insightHoverDevice ? (
+        <InsightFeedRobotHoverPopover
+          device={insightHoverDevice}
+          anchor={insightHoverAnchor}
+          panelBackground={panelBackground}
+          cardBackground={cardBackground}
+          borderColor={borderColor}
+          textPrimary={textPrimary}
+          textSecondary={textSecondary}
+          accent={accent}
+          statusOnline={statusOnline}
+          statusOffline={statusOffline}
+          statusWarning={statusWarning}
+          statusError={statusError}
+          statusMaintenance={statusMaintenance}
+          lowBatteryThreshold={lowBatteryThreshold}
+          abnormalTempThreshold={abnormalTempThreshold}
+          headingFont={headingFont}
+          bodyFont={bodyFont}
+          monoFont={monoFont}
+          robotIdLabel={ui.robotId}
+          locationLabel={ui.currentLocation}
+          batteryLabel={ui.batteryGauge}
+          sensorLabel={ui.sensorStatus}
+        />
+      ) : null}
     </div>
   )
 }

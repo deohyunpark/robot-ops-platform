@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import { type InsightFeedItem } from "./telemetryAdapter"
+import type { InsightFeedHoverAnchor } from "./InsightFeedRobotHoverPopover"
 import type { RoboticsDashboardFont } from "./roboticsMonitoringDashboardTypes"
 import { withAlpha } from "./roboticsMonitoringUtils"
 
@@ -17,6 +18,8 @@ type InsightFeedPanelProps = {
   bodyFont: RoboticsDashboardFont
   monoFont: RoboticsDashboardFont
   onDismissRobot: (robotId: string) => void
+  onRobotHoverChange?: (anchor: InsightFeedHoverAnchor | null) => void
+  onRobotSelect?: (robotId: string) => void
 }
 
 function levelColor(
@@ -86,6 +89,8 @@ function AiSummaryCard(props: {
   bodyFont: RoboticsDashboardFont
   monoFont: RoboticsDashboardFont
   onDismissRobot: (robotId: string) => void
+  onRobotHoverChange?: (anchor: InsightFeedHoverAnchor | null) => void
+  onRobotSelect?: (robotId: string) => void
 }) {
   const {
     item,
@@ -101,6 +106,8 @@ function AiSummaryCard(props: {
     bodyFont,
     monoFont,
     onDismissRobot,
+    onRobotHoverChange,
+    onRobotSelect,
   } = props
 
   const ko = language === "ko"
@@ -112,8 +119,22 @@ function AiSummaryCard(props: {
     secondary: textSecondary,
   })
 
+  const reportHover = (clientX: number, clientY: number) => {
+    onRobotHoverChange?.({ robotId: item.robotId, clientX, clientY })
+  }
+
   return (
     <div
+      role={onRobotSelect ? "button" : undefined}
+      tabIndex={onRobotSelect ? 0 : undefined}
+      onClick={() => onRobotSelect?.(item.robotId)}
+      onKeyDown={(e) => {
+        if (!onRobotSelect) return
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onRobotSelect(item.robotId)
+        }
+      }}
       style={{
         width: "100%",
         background: cardBackground,
@@ -122,6 +143,21 @@ function AiSummaryCard(props: {
         boxShadow: `0 10px 28px ${withAlpha("#000", 0.18)}`,
         display: "flex",
         flexDirection: "column",
+        cursor: onRobotSelect ? "pointer" : "default",
+        outline: "none",
+        transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
+      }}
+      onMouseEnter={(e) => {
+        if (onRobotSelect) {
+          e.currentTarget.style.transform = "translateY(-1px)"
+          e.currentTarget.style.boxShadow = `0 14px 32px ${withAlpha("#000", 0.22)}`
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (onRobotSelect) {
+          e.currentTarget.style.transform = "translateY(0)"
+          e.currentTarget.style.boxShadow = `0 10px 28px ${withAlpha("#000", 0.18)}`
+        }
       }}
     >
       <div
@@ -134,7 +170,19 @@ function AiSummaryCard(props: {
           borderBottom: `1px solid ${borderColor}`,
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            minWidth: 0,
+            flex: 1,
+            cursor: onRobotHoverChange ? "pointer" : "default",
+          }}
+          onMouseEnter={(e) => reportHover(e.clientX, e.clientY)}
+          onMouseMove={(e) => reportHover(e.clientX, e.clientY)}
+          onMouseLeave={() => onRobotHoverChange?.(null)}
+        >
           <span
             aria-hidden
             style={{
@@ -177,7 +225,10 @@ function AiSummaryCard(props: {
         </div>
         <button
           type="button"
-          onClick={() => onDismissRobot(item.robotId)}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDismissRobot(item.robotId)
+          }}
           aria-label={ko ? "닫기" : "Close"}
           style={{
             border: `1px solid ${borderColor}`,
@@ -253,9 +304,10 @@ function AiSummaryCard(props: {
         <div style={{ display: "flex", gap: 8 }}>
           <button
             type="button"
-            onClick={() =>
+            onClick={(e) => {
+              e.stopPropagation()
               setExpanded((prev) => (prev === "cause" ? null : "cause"))
-            }
+            }}
             style={{
               flex: 1,
               display: "inline-flex",
@@ -279,9 +331,10 @@ function AiSummaryCard(props: {
           </button>
           <button
             type="button"
-            onClick={() =>
+            onClick={(e) => {
+              e.stopPropagation()
               setExpanded((prev) => (prev === "action" ? null : "action"))
-            }
+            }}
             style={{
               flex: 1,
               display: "inline-flex",
@@ -353,48 +406,17 @@ export function InsightFeedPanel(props: InsightFeedPanelProps) {
     monoFont,
     panelBackground,
     onDismissRobot,
+    onRobotHoverChange,
+    onRobotSelect,
   } = props
 
-  const ko = language === "ko"
   const sortedItems = useMemo(
     () => [...items].sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)),
     [items]
   )
 
   if (!sortedItems.length) {
-    return (
-      <InsightFeedScrollShell borderColor={borderColor} cardBackground={cardBackground}>
-        <div
-          style={{
-            minHeight: 220,
-            borderRadius: 12,
-            background: cardBackground,
-            border: `1px solid ${borderColor}`,
-            padding: 20,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            textAlign: "center",
-          }}
-        >
-          <p
-            style={{
-              margin: 0,
-              fontFamily: bodyFont.fontFamily,
-              fontSize: 16,
-              fontWeight: 500,
-              color: textPrimary,
-              lineHeight: 1.6,
-              maxWidth: 300,
-            }}
-          >
-            {ko
-              ? "수신된 인사이트 피드가 없습니다. WebSocket /robot/device/feed 메시지를 기다리는 중입니다."
-              : "No insight feed yet. Waiting for /robot/device/feed messages."}
-          </p>
-        </div>
-      </InsightFeedScrollShell>
-    )
+    return null
   }
 
   return (
@@ -415,6 +437,8 @@ export function InsightFeedPanel(props: InsightFeedPanelProps) {
           bodyFont={bodyFont}
           monoFont={monoFont}
           onDismissRobot={onDismissRobot}
+          onRobotHoverChange={onRobotHoverChange}
+          onRobotSelect={onRobotSelect}
         />
       ))}
     </InsightFeedScrollShell>

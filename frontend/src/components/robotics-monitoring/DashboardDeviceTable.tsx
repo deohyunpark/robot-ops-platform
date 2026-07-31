@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useEffect, useState } from "react"
 import type { Device } from "./roboticsMonitoringDashboardTypes"
 import type { RoboticsDashboardFont } from "./roboticsMonitoringDashboardTypes"
 import { Badge } from "./DashboardParts"
@@ -27,6 +27,7 @@ export function useDeviceTableRenderer(args: {
   abnormalTempThreshold: number
   onSelect: (id: string) => void
   selectedId: string
+  chatInsertActive?: boolean
   ui: UiStrings
 }) {
   const {
@@ -37,6 +38,7 @@ export function useDeviceTableRenderer(args: {
     cardBackground,
     lowBatteryThreshold,
     monoFont,
+    chatInsertActive,
     onSelect,
     panelBackground,
     selectedId,
@@ -47,6 +49,11 @@ export function useDeviceTableRenderer(args: {
     ui,
   } = args
   const tableColumns = "repeat(6, minmax(0, 1fr))"
+  const [chatInsertHoverId, setChatInsertHoverId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!chatInsertActive) setChatInsertHoverId(null)
+  }, [chatInsertActive])
 
   return useCallback(
     (rows: Device[]) => {
@@ -58,8 +65,12 @@ export function useDeviceTableRenderer(args: {
             width: "100%",
             borderRadius: 12,
             overflow: "hidden",
-            border: `1px solid ${borderColor}`,
+            border: `1px solid ${chatInsertActive ? withAlpha(accent, 0.45) : borderColor}`,
             background: cardBackground,
+            boxShadow: chatInsertActive
+              ? `0 0 0 1px ${withAlpha(accent, 0.12)}, 0 0 20px ${withAlpha(accent, 0.08)}`
+              : undefined,
+            transition: "border-color 0.2s ease, box-shadow 0.2s ease",
           }}
         >
           <div
@@ -89,7 +100,7 @@ export function useDeviceTableRenderer(args: {
               {ui.temp}
             </span>
             <span role="columnheader">
-              이벤트
+              {ui.fleetColEvent ?? "Event"}
             </span>
             <span role="columnheader">
               {ui.lastSeen}
@@ -126,12 +137,15 @@ export function useDeviceTableRenderer(args: {
                 const batteryBad = d.battery <= lowBatteryThreshold
                 const tempBad = d.temperature >= abnormalTempThreshold
                 const eventBad = eventText !== "-"
-                const emergencyBad = d.emergency
+                const isChatInsertHover =
+                  chatInsertActive && chatInsertHoverId === d.id
 
-                const rowBg = isSelected
-                  ? withAlpha(accent, 0.1)
-                  : "transparent"
-                const rowHover = withAlpha(accent, 0.06)
+                const rowBg = isChatInsertHover
+                  ? withAlpha(accent, 0.24)
+                  : isSelected
+                    ? withAlpha(accent, 0.1)
+                    : "transparent"
+                const rowHover = withAlpha(accent, chatInsertActive ? 0.14 : 0.06)
 
                 return (
                   <button
@@ -139,6 +153,17 @@ export function useDeviceTableRenderer(args: {
                     type="button"
                     role="row"
                     aria-selected={isSelected}
+                    onMouseDown={(e) => {
+                      if (chatInsertActive) e.preventDefault()
+                    }}
+                    onMouseEnter={() => {
+                      if (chatInsertActive) setChatInsertHoverId(d.id)
+                    }}
+                    onMouseLeave={() => {
+                      if (chatInsertActive) {
+                        setChatInsertHoverId((prev) => (prev === d.id ? null : prev))
+                      }
+                    }}
                     onClick={() => onSelect(d.id)}
                     style={{
                       width: "100%",
@@ -151,9 +176,15 @@ export function useDeviceTableRenderer(args: {
                       background: rowBg,
                       color: textPrimary,
                       textAlign: "left",
-                      cursor: "pointer",
+                      cursor: chatInsertActive ? "copy" : "pointer",
                       outline: "none",
                       position: "relative",
+                      boxShadow: isChatInsertHover
+                        ? `inset 0 0 0 2px ${withAlpha(accent, 0.55)}, 0 4px 14px ${withAlpha(accent, 0.12)}`
+                        : undefined,
+                      transform: isChatInsertHover ? "translateX(3px)" : undefined,
+                      transition:
+                        "background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease",
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
@@ -182,6 +213,8 @@ export function useDeviceTableRenderer(args: {
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           textAlign: "center",
+                          fontWeight: isChatInsertHover ? 700 : 400,
+                          color: isChatInsertHover ? accent : textPrimary,
                         }}
                       >
                         {d.id}
@@ -327,18 +360,18 @@ export function useDeviceTableRenderer(args: {
                           ...monoFont,
                           fontSize: coerceFontSize(monoFont?.fontSize, 12),
                           color: eventBad ? eventColor : textSecondary,
+                          fontWeight:
+                            severity === "CRITICAL" ||
+                            severity === "ERROR" ||
+                            severity === "WARN" ||
+                            severity === "WARNING"
+                              ? 700
+                              : 400,
                           whiteSpace: "nowrap",
                         }}
                       >
                         {eventText}
                       </span>
-                      {emergencyBad ? (
-                        <Badge
-                          label="EMERGENCY"
-                          color={statusError}
-                          font={monoFont}
-                        />
-                      ) : null}
                     </span>
 
                     <span
@@ -370,7 +403,7 @@ export function useDeviceTableRenderer(args: {
                       className="__hover"
                     />
                     <style>{`
-                      button[role="row"]:hover .__hover { opacity: ${isSelected ? 0 : 1}; }
+                      button[role="row"]:hover .__hover { opacity: ${isSelected || chatInsertActive ? 0 : 1}; }
                       button[role="row"]:focus-visible { box-shadow: 0 0 0 3px ${withAlpha(accent, 0.35)} inset; }
                     `}</style>
                   </button>
@@ -387,6 +420,8 @@ export function useDeviceTableRenderer(args: {
       borderColor,
       bodyFont,
       cardBackground,
+      chatInsertActive,
+      chatInsertHoverId,
       lowBatteryThreshold,
       monoFont,
       onSelect,

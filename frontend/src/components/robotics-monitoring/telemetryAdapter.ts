@@ -164,6 +164,27 @@ export function eventBatchFromPayload(input: unknown): BackendDeviceEvent[] {
   return one ? [one] : []
 }
 
+export function deviceEventFeedRowToBackendEvent(
+  row: DeviceEventFeedRow
+): BackendDeviceEvent {
+  return {
+    id: null,
+    deviceId: row.deviceId,
+    eventType: row.eventType,
+    severity: row.severity,
+    createdAt: row.ts || null,
+  }
+}
+
+/** WS/API event payload — RedisEventResponse(eventName) and legacy eventType shapes. */
+export function backendEventsFromPayload(input: unknown): BackendDeviceEvent[] {
+  const feedRows = deviceEventsFeedFromPayload(input)
+  if (feedRows.length) {
+    return feedRows.map(deviceEventFeedRowToBackendEvent)
+  }
+  return eventBatchFromPayload(input)
+}
+
 export function resolveEventDeviceId(ev: BackendDeviceEvent): string {
   return ev.deviceId ?? ev.robotId ?? ev.payload?.robotId ?? ""
 }
@@ -309,6 +330,53 @@ export function filterCriticalEventRows(
   rows: DeviceEventFeedRow[]
 ): DeviceEventFeedRow[] {
   return rows.filter((r) => r.severity.toUpperCase() === "CRITICAL")
+}
+
+export function backendEventToFeedRow(
+  ev: BackendDeviceEvent
+): DeviceEventFeedRow | null {
+  const deviceId = resolveEventDeviceId(ev)
+  if (!deviceId || !ev.eventType?.trim()) return null
+  return {
+    deviceId,
+    eventType: ev.eventType.trim(),
+    severity: ev.severity?.trim() || mapEventTypeToSeverity(ev.eventType),
+    ts: ev.createdAt ?? ev.payload?.ts ?? new Date().toISOString(),
+  }
+}
+
+export function redisOfflineEventToFeedRow(
+  ev: RedisEventResponse
+): DeviceEventFeedRow {
+  return {
+    deviceId: ev.deviceId,
+    eventType: ev.eventName,
+    severity: mapEventTypeToSeverity(ev.eventName),
+    ts: ev.createAt ?? new Date().toISOString(),
+  }
+}
+
+export function fleetEventRowsFromPayload(input: unknown): DeviceEventFeedRow[] {
+  const fromFeed = deviceEventsFeedFromPayload(input)
+  if (fromFeed.length) return fromFeed
+  return backendEventsFromPayload(input)
+    .map(backendEventToFeedRow)
+    .filter((row): row is DeviceEventFeedRow => !!row)
+}
+
+export function mergeLatestFleetEventsByDevice(
+  prev: Record<string, DeviceEventFeedRow>,
+  rows: DeviceEventFeedRow[]
+): Record<string, DeviceEventFeedRow> {
+  if (!rows.length) return prev
+  const next = { ...prev }
+  for (const row of rows) {
+    const old = next[row.deviceId]
+    if (!old || row.ts.localeCompare(old.ts) >= 0) {
+      next[row.deviceId] = row
+    }
+  }
+  return next
 }
 
 function extractDeviceEventFeedList(payload: unknown): DeviceEventFeedRow[] {
