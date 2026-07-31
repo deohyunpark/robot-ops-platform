@@ -136,5 +136,5 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build application images
-        working-directory: docker
+        working-directory: infra
         run: docker compose build backend frontend simulator
