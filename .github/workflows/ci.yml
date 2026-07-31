@@ -25,13 +25,47 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd="pg_isready -U app -d robotops"
-          --health-interval=10s
+          --health-interval=5s
           --health-timeout=5s
-          --health-retries=5
+          --health-retries=20
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+      mqtt:
+        image: eclipse-mosquitto:2
+        ports:
+          - 1883:1883
 
     defaults:
       run:
         working-directory: backend
+
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/robotops
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+
+      SPRING_JPA_HIBERNATE_DDL_AUTO: create
+      SPRING_SQL_INIT_MODE: never
+
+      SPRING_DATA_REDIS_HOST: localhost
+      SPRING_DATA_REDIS_PORT: "6379"
+
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+      SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
+
+      MQTT_BROKER_URL: tcp://localhost:1883
+
+      OPENAI_API_KEY: test-key
 
     steps:
       - name: Checkout source
@@ -52,16 +86,14 @@ jobs:
           PGPASSWORD: app
         run: |
           pg_isready -h localhost -p 5432 -U app -d robotops
-          psql -h localhost -p 5432 -U app -d robotops -c "SELECT 1;"
+          psql -h localhost -p 5432 -U app -d robotops -c "SELECT version();"
+
+      - name: Check Redis
+        run: |
+          redis-cli -h localhost -p 6379 ping
 
       - name: Run backend tests
-        env:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/robotops
-          SPRING_DATASOURCE_USERNAME: app
-          SPRING_DATASOURCE_PASSWORD: app
-          SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
-          OPENAI_API_KEY: test-key
-        run: ./gradlew clean test --stacktrace
+        run: ./gradlew clean test --stacktrace --info
 
       - name: Upload test report
         if: always()
@@ -69,6 +101,7 @@ jobs:
         with:
           name: backend-test-report
           path: backend/build/reports/tests/test
+          if-no-files-found: ignore
 
   frontend-build:
     name: Frontend Build
