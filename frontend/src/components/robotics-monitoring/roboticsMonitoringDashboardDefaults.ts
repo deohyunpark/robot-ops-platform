@@ -9,7 +9,7 @@ export const roboticsMonitoringDashboardDefaults: RoboticsMonitoringDashboardPro
     title: "로봇 운영 모니터링",
     subtitle: "사이트별 실시간 상태, 알림, 진단 대시보드",
     devices: [],
-    groupBySite: true,
+    groupBySite: false,
     enableRealtimeSimulation: true,
     refreshMs: 900,
     showKPIs: true,

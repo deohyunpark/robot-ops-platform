@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import type { Device } from "./roboticsMonitoringDashboardTypes"
 import type { RoboticsDashboardFont } from "./roboticsMonitoringDashboardTypes"
 import { Badge } from "./DashboardParts"
+import { useMediaQuery } from "./useMediaQuery"
 import {
   coerceFontSize,
   formatBattery,
@@ -48,7 +49,9 @@ export function useDeviceTableRenderer(args: {
     textSecondary,
     ui,
   } = args
+  const isCompactLayout = useMediaQuery("(max-width: 767px)")
   const tableColumns = "repeat(6, minmax(0, 1fr))"
+  const tableMinWidth = isCompactLayout ? 720 : undefined
   const [chatInsertHoverId, setChatInsertHoverId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -59,20 +62,28 @@ export function useDeviceTableRenderer(args: {
     (rows: Device[]) => {
       return (
         <div
-          role="table"
-          aria-label="Device list"
           style={{
             width: "100%",
-            borderRadius: 12,
-            overflow: "hidden",
-            border: `1px solid ${chatInsertActive ? withAlpha(accent, 0.45) : borderColor}`,
-            background: cardBackground,
-            boxShadow: chatInsertActive
-              ? `0 0 0 1px ${withAlpha(accent, 0.12)}, 0 0 20px ${withAlpha(accent, 0.08)}`
-              : undefined,
-            transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+            overflowX: isCompactLayout ? "auto" : undefined,
+            WebkitOverflowScrolling: "touch",
           }}
         >
+          <div
+            role="table"
+            aria-label="Device list"
+            style={{
+              width: "100%",
+              minWidth: tableMinWidth,
+              borderRadius: 12,
+              overflow: "hidden",
+              border: `1px solid ${chatInsertActive ? withAlpha(accent, 0.45) : borderColor}`,
+              background: cardBackground,
+              boxShadow: chatInsertActive
+                ? `0 0 0 1px ${withAlpha(accent, 0.12)}, 0 0 20px ${withAlpha(accent, 0.08)}`
+                : undefined,
+              transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+            }}
+          >
           <div
             role="row"
             style={{
@@ -412,10 +423,13 @@ export function useDeviceTableRenderer(args: {
             )}
           </div>
         </div>
+        </div>
       )
     },
     [
       abnormalTempThreshold,
+      isCompactLayout,
+      tableMinWidth,
       accent,
       borderColor,
       bodyFont,

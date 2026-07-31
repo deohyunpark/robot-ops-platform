@@ -68,6 +68,7 @@ import type {
   InsightFeedItem,
 } from "./telemetryAdapter"
 import { useElementInView } from "./useElementInView"
+import { useMediaQuery } from "./useMediaQuery"
 import {
   clamp,
   coerceFontSize,
@@ -134,6 +135,14 @@ function isOfflineStompDestination(destination?: string): boolean {
   return d === "/robot/device/offline" || d.endsWith("/robot/device/offline")
 }
 
+function compareFleetDevicesByEventSeverity(a: Device, b: Device): number {
+  const rank =
+    outageRowSeverityRank(a.lastEventSeverity ?? "") -
+    outageRowSeverityRank(b.lastEventSeverity ?? "")
+  if (rank !== 0) return rank
+  return a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
+}
+
 function fleetDeviceStub(id: string, status: DeviceStatus): Device {
   return {
     id,
@@ -160,6 +169,33 @@ function deviceWithLatestFleetEvent(
     lastEventType: row.eventType,
     lastEventSeverity: row.severity,
   }
+}
+
+function isRegisteredDeviceOffline(
+  id: string,
+  device: Device | undefined,
+  offlineIds: Set<string>
+): boolean {
+  return offlineIds.has(id) || device?.status === "Offline"
+}
+
+function registeredFleetDevicesFromIds(
+  deviceIds: string[],
+  derivedById: Map<string, Device>,
+  offlineIds: Set<string>
+): Device[] {
+  return deviceIds.map((id) => {
+    const existing = derivedById.get(id)
+    if (existing) {
+      return isRegisteredDeviceOffline(id, existing, offlineIds)
+        ? { ...existing, status: "Offline" as DeviceStatus }
+        : existing
+    }
+    return fleetDeviceStub(
+      id,
+      isRegisteredDeviceOffline(id, undefined, offlineIds) ? "Offline" : "Online"
+    )
+  })
 }
 
 export default function RoboticsMonitoringDashboard(
@@ -209,15 +245,15 @@ export default function RoboticsMonitoringDashboard(
 
   const containerRef = useRef<HTMLDivElement>(null)
   const inView = useElementInView(containerRef, { amount: 0.2 })
+  const isCompactLayout = useMediaQuery("(max-width: 767px)")
+  const isTabletLayout = useMediaQuery("(max-width: 1023px)")
+  const stackMainColumns = isTabletLayout && showDetailPanel
 
   const [selectedId, setSelectedId] = useState<string>("")
   const [modalOpen, setModalOpen] = useState(false)
   const [fleetModalOpen, setFleetModalOpen] = useState(false)
   const [onlineOfflineModalOpen, setOnlineOfflineModalOpen] = useState(false)
   const [outageModalOpen, setOutageModalOpen] = useState(false)
-  const [outageModalEventRows, setOutageModalEventRows] = useState<DeviceEventFeedRow[]>(
-    []
-  )
   const [outageModalLoading, setOutageModalLoading] = useState(false)
   const [outageModalError, setOutageModalError] = useState<string | null>(null)
   const [outageSeverityTab, setOutageSeverityTab] = useState<
@@ -230,7 +266,6 @@ export default function RoboticsMonitoringDashboard(
   const [eventAckByKey, setEventAckByKey] = useState<Record<string, EventDetailAckState>>(
     () => loadEventAckMap()
   )
-  const outageModalOpenRef = useRef(false)
   const eventDetailOpenRef = useRef(false)
   const [throughputModalOpen, setThroughputModalOpen] = useState(false)
   const [uptimeModalOpen, setUptimeModalOpen] = useState(false)
@@ -250,8 +285,8 @@ export default function RoboticsMonitoringDashboard(
   /** device-list + offline 초기 로드 완료 — 온라인/오프라인 KPI 표시 전 */
   const [dashboardOfflineBootstrapped, setDashboardOfflineBootstrapped] =
     useState(false)
-  /** GET /v1/dashboard/all-events — CRITICAL만 장애 KPI·모달 초기값 */
-  const [dashboardCriticalOutageRows, setDashboardCriticalOutageRows] = useState<
+  /** GET /v1/dashboard/all-events — 장애 KPI·모달 공통 소스 (API + WS 병합) */
+  const [dashboardOutageEventRows, setDashboardOutageEventRows] = useState<
     DeviceEventFeedRow[]
   >([])
   const [dashboardAllEventsBootstrapped, setDashboardAllEventsBootstrapped] =
@@ -350,14 +385,7 @@ export default function RoboticsMonitoringDashboard(
         }
         return Array.from(byId.values())
       })
-      const critical = rows.filter(
-        (row) => row.severity.toUpperCase() === "CRITICAL"
-      )
-      if (critical.length) {
-        setDashboardCriticalOutageRows((prev) =>
-          mergeOutageEventRows(prev, critical)
-        )
-      }
+      setDashboardOutageEventRows((prev) => mergeOutageEventRows(prev, rows))
     })
   }, [])
 
@@ -399,10 +427,6 @@ export default function RoboticsMonitoringDashboard(
   )
 
   useEffect(() => {
-    outageModalOpenRef.current = outageModalOpen
-  }, [outageModalOpen])
-
-  useEffect(() => {
     eventDetailOpenRef.current = eventDetailOpen
   }, [eventDetailOpen])
 
@@ -428,13 +452,6 @@ export default function RoboticsMonitoringDashboard(
       const fleetEventRows = fleetEventRowsFromPayload(payload)
       if (fleetEventRows.length) {
         ingestFleetEventRows(fleetEventRows)
-        if (outageModalOpenRef.current) {
-          startTransition(() =>
-            setOutageModalEventRows((prev) =>
-              mergeOutageEventRows(prev, fleetEventRows)
-            )
-          )
-        }
       }
 
       const throughput = throughputFromPayload(payload)
@@ -692,9 +709,27 @@ export default function RoboticsMonitoringDashboard(
     lowBatteryThreshold,
   ])
 
+  const registeredFleetDevices = useMemo(() => {
+    if (!dashboardDeviceListReady || dashboardDeviceIds.length === 0) {
+      return derivedDevices
+    }
+    const byId = new Map(derivedDevices.map((d) => [d.id, d]))
+    const offlineSet = new Set(wsOfflineDeviceIds)
+    return registeredFleetDevicesFromIds(
+      dashboardDeviceIds,
+      byId,
+      offlineSet
+    )
+  }, [
+    dashboardDeviceListReady,
+    dashboardDeviceIds,
+    derivedDevices,
+    wsOfflineDeviceIds,
+  ])
+
   const filteredDevices = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return derivedDevices.filter((d) => {
+    return registeredFleetDevices.filter((d) => {
       if (q) {
         const hay =
           `${d.id} ${d.name} ${d.site} ${d.model} ${d.status}`.toLowerCase()
@@ -708,7 +743,7 @@ export default function RoboticsMonitoringDashboard(
       return true
     })
   }, [
-    derivedDevices,
+    registeredFleetDevices,
     search,
     filterOffline,
     filterLowBattery,
@@ -720,9 +755,9 @@ export default function RoboticsMonitoringDashboard(
 
   const fleetTableDevices = useMemo(
     () =>
-      filteredDevices.map((d) =>
-        deviceWithLatestFleetEvent(d, latestFleetEventsByDevice)
-      ),
+      filteredDevices
+        .map((d) => deviceWithLatestFleetEvent(d, latestFleetEventsByDevice))
+        .sort(compareFleetDevicesByEventSeverity),
     [filteredDevices, latestFleetEventsByDevice]
   )
 
@@ -1417,61 +1452,93 @@ export default function RoboticsMonitoringDashboard(
     }))
   }, [sortedFleetDevices])
 
-  /** 등록 장비(device-list) ∩ offline API/WS — 총 장비 KPI와 동일 집합 기준 */
+  /** 등록 장비(device-list) 기준 — offline API/WS + Offline 상태 */
   const onlineOfflineApiCounts = useMemo(() => {
     if (!dashboardDeviceListReady) return null
     const offlineSet = new Set(wsOfflineDeviceIds)
+    const byId = new Map(registeredFleetDevices.map((d) => [d.id, d]))
     let offline = 0
     for (const id of dashboardDeviceIds) {
-      if (offlineSet.has(id)) offline++
+      if (isRegisteredDeviceOffline(id, byId.get(id), offlineSet)) offline++
     }
     return {
       online: dashboardDeviceIds.length - offline,
       offline,
     }
-  }, [dashboardDeviceListReady, dashboardDeviceIds, wsOfflineDeviceIds])
+  }, [
+    dashboardDeviceListReady,
+    dashboardDeviceIds,
+    registeredFleetDevices,
+    wsOfflineDeviceIds,
+  ])
 
   const onlineOfflineLists = useMemo(() => {
     const offlineSet = new Set(wsOfflineDeviceIds)
     if (dashboardDeviceListReady) {
-      const byId = new Map(sortedFleetDevices.map((d) => [d.id, d]))
-      const online = dashboardDeviceIds
-        .filter((id) => !offlineSet.has(id))
-        .map((id) => byId.get(id) ?? fleetDeviceStub(id, "Online"))
-      const offline = dashboardDeviceIds
-        .filter((id) => offlineSet.has(id))
-        .map((id) => byId.get(id) ?? fleetDeviceStub(id, "Offline"))
+      const devices = registeredFleetDevices
+      const online = devices.filter(
+        (d) => !isRegisteredDeviceOffline(d.id, d, offlineSet)
+      )
+      const offline = devices.filter((d) =>
+        isRegisteredDeviceOffline(d.id, d, offlineSet)
+      )
       return { online, offline }
     }
     return {
-      online: sortedFleetDevices.filter((d) => !offlineSet.has(d.id)),
-      offline: sortedFleetDevices.filter((d) => offlineSet.has(d.id)),
+      online: sortedFleetDevices.filter(
+        (d) => !isRegisteredDeviceOffline(d.id, d, offlineSet)
+      ),
+      offline: sortedFleetDevices.filter((d) =>
+        isRegisteredDeviceOffline(d.id, d, offlineSet)
+      ),
     }
   }, [
     dashboardDeviceListReady,
-    dashboardDeviceIds,
+    registeredFleetDevices,
     sortedFleetDevices,
     wsOfflineDeviceIds,
   ])
 
-  /** 온라인/오프라인 KPI — (등록 총장비 − 오프라인) / 오프라인, API 로드 후 일괄 표시 */
+  /** 온라인/오프라인 KPI — 총 장비 KPI와 동일 집합 (등록 장비 기준) */
   const kpiOnlineOfflineValue = useMemo(() => {
     if (dashboardDeviceListLoading || !dashboardOfflineBootstrapped) return "…"
-    if (onlineOfflineApiCounts) {
-      return `${onlineOfflineApiCounts.online} / ${onlineOfflineApiCounts.offline}`
+    const counts = onlineOfflineApiCounts ?? {
+      online: onlineOfflineLists.online.length,
+      offline: onlineOfflineLists.offline.length,
     }
-    return `${onlineOfflineLists.online.length} / ${onlineOfflineLists.offline.length}`
+    const ko = language === "ko"
+    return ko
+      ? `온라인 ${counts.online} · 오프라인 ${counts.offline}`
+      : `Online ${counts.online} · Offline ${counts.offline}`
   }, [
     dashboardDeviceListLoading,
     dashboardOfflineBootstrapped,
+    language,
     onlineOfflineApiCounts,
     onlineOfflineLists,
+  ])
+
+  const kpiOnlineOfflineHint = useMemo(() => {
+    if (dashboardDeviceListLoading || !dashboardOfflineBootstrapped) return ""
+    if (!dashboardDeviceListReady) return ""
+    const total = dashboardDeviceIds.length
+    const counts = onlineOfflineApiCounts
+    if (!counts) return ""
+    if (counts.online + counts.offline !== total) return ""
+    return language === "ko" ? `합계 ${total}대` : `Total ${total}`
+  }, [
+    dashboardDeviceListLoading,
+    dashboardOfflineBootstrapped,
+    dashboardDeviceListReady,
+    dashboardDeviceIds.length,
+    language,
+    onlineOfflineApiCounts,
   ])
 
   const outageModalGroups = useMemo(() => {
     const buckets = new Map<string, DeviceEventFeedRow[]>()
     for (const key of OUTAGE_SEVERITY_SECTION_ORDER) buckets.set(key, [])
-    for (const row of outageModalEventRows) {
+    for (const row of dashboardOutageEventRows) {
       const section = outageSeveritySection(row.severity)
       buckets.get(section)!.push(row)
     }
@@ -1481,7 +1548,7 @@ export default function RoboticsMonitoringDashboard(
         b.ts.localeCompare(a.ts)
       ),
     }))
-  }, [outageModalEventRows])
+  }, [dashboardOutageEventRows])
 
   const outageModalActiveRows = useMemo(() => {
     return (
@@ -1489,10 +1556,15 @@ export default function RoboticsMonitoringDashboard(
     )
   }, [outageModalGroups, outageSeverityTab])
 
+  const dashboardCriticalOutageCount = useMemo(
+    () => filterCriticalEventRows(dashboardOutageEventRows).length,
+    [dashboardOutageEventRows]
+  )
+
   const kpiOutageValue = useMemo(() => {
     if (!dashboardAllEventsBootstrapped) return "…"
-    return String(dashboardCriticalOutageRows.length)
-  }, [dashboardAllEventsBootstrapped, dashboardCriticalOutageRows.length])
+    return String(dashboardCriticalOutageCount)
+  }, [dashboardAllEventsBootstrapped, dashboardCriticalOutageCount])
 
   const throughputChartPoints = useMemo(() => {
     const sortedChart = [...(throughputData?.chart ?? [])].sort((a, b) => {
@@ -1737,7 +1809,7 @@ export default function RoboticsMonitoringDashboard(
     fetchDashboardAllEvents(ac.signal)
       .then((rows) => {
         if (ac.signal.aborted) return
-        setOutageModalEventRows([...rows].sort(compareOutageModalRows))
+        setDashboardOutageEventRows([...rows].sort(compareOutageModalRows))
         const buckets = new Map<string, number>()
         for (const key of OUTAGE_SEVERITY_SECTION_ORDER) buckets.set(key, 0)
         for (const row of rows) {
@@ -1752,7 +1824,7 @@ export default function RoboticsMonitoringDashboard(
       .catch((e) => {
         if (ac.signal.aborted) return
         setOutageModalError(e instanceof Error ? e.message : String(e))
-        setOutageModalEventRows([])
+        setDashboardOutageEventRows([])
       })
       .finally(() => {
         if (ac.signal.aborted) return
@@ -1796,7 +1868,9 @@ export default function RoboticsMonitoringDashboard(
           )
           setDashboardOfflineBootstrapped(true)
           setLatestFleetEventsByDevice(mergedFleetEvents)
-          setDashboardCriticalOutageRows(filterCriticalEventRows(allEventRows))
+          setDashboardOutageEventRows(
+            [...allEventRows].sort(compareOutageModalRows)
+          )
           setDashboardAllEventsBootstrapped(true)
           setLiveDevices((prev) => {
             const byId = new Map((prev ?? []).map((d) => [d.id, d]))
@@ -1807,8 +1881,7 @@ export default function RoboticsMonitoringDashboard(
             }
             const now = new Date().toISOString()
             for (const id of offlineSet) {
-              const old = byId.get(id)
-              if (!old) continue
+              const old = byId.get(id) ?? fleetDeviceStub(id, "Offline")
               byId.set(id, {
                 ...old,
                 status: "Offline",
@@ -1843,7 +1916,7 @@ export default function RoboticsMonitoringDashboard(
         setDashboardDeviceListReady(false)
         setDashboardDeviceListLoading(false)
         setDashboardOfflineBootstrapped(true)
-        setDashboardCriticalOutageRows([])
+        setDashboardOutageEventRows([])
         setLatestFleetEventsByDevice({})
         setDashboardAllEventsBootstrapped(true)
       })
@@ -1895,8 +1968,8 @@ export default function RoboticsMonitoringDashboard(
     closeUptimeModal,
   ])
 
-  const isFixedWidth = style && style.width === "100%"
-  const isFixedHeight = style && style.height === "100%"
+  const isFixedWidth = !style?.width || style.width === "100%"
+  const isFixedHeight = !style?.height || style.height === "100%"
 
   return (
     <div
@@ -1904,19 +1977,29 @@ export default function RoboticsMonitoringDashboard(
       className="rm-dashboard-root"
       style={{
         ...style,
-        position: "relative",
         width: "100%",
-        height: "100%",
         background,
         color: textPrimary,
         display: "flex",
         flexDirection: "column",
-        gap: 14,
-        padding: 16,
+        gap: isCompactLayout ? 10 : 14,
+        padding: isCompactLayout ? 10 : 16,
         boxSizing: "border-box",
-        overflow: "hidden",
-        ...(isFixedWidth ? null : { minWidth: 960 }),
-        ...(isFixedHeight ? null : { minHeight: 640 }),
+        overflowX: "hidden",
+        ...(isCompactLayout
+          ? {
+              position: "relative",
+              height: "auto",
+              minHeight: "100%",
+              overflowY: "visible",
+            }
+          : {
+              position: "relative",
+              height: "100%",
+              overflow: "hidden",
+            }),
+        ...(isFixedWidth || isCompactLayout ? null : { minWidth: 960 }),
+        ...(isFixedHeight || isCompactLayout ? null : { minHeight: 640 }),
       }}
     >
       <style>{`
@@ -1956,7 +2039,8 @@ export default function RoboticsMonitoringDashboard(
           position: "relative",
           width: "100%",
           display: "flex",
-          alignItems: "flex-start",
+          flexDirection: isCompactLayout ? "column" : "row",
+          alignItems: isCompactLayout ? "stretch" : "flex-start",
           justifyContent: "space-between",
           gap: 12,
           padding: 14,
@@ -2052,8 +2136,12 @@ export default function RoboticsMonitoringDashboard(
           style={{
             width: "100%",
             display: "grid",
-            gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-            gap: 12,
+            gridTemplateColumns: isCompactLayout
+              ? "repeat(2, minmax(0, 1fr))"
+              : isTabletLayout
+                ? "repeat(3, minmax(0, 1fr))"
+                : "repeat(6, minmax(0, 1fr))",
+            gap: isCompactLayout ? 8 : 12,
           }}
         >
           <KPI
@@ -2072,7 +2160,7 @@ export default function RoboticsMonitoringDashboard(
           <KPI
             title={ui.kpiOnlineOffline}
             value={kpiOnlineOfflineValue}
-            hint=""
+            hint={kpiOnlineOfflineHint}
             color={
               kpis.error > 0
                 ? statusError
@@ -2118,7 +2206,7 @@ export default function RoboticsMonitoringDashboard(
             value={kpiOutageValue}
             hint=""
             color={
-              dashboardCriticalOutageRows.length > 0 ? statusError : accent
+              dashboardCriticalOutageCount > 0 ? statusError : accent
             }
             bg={cardBackground}
             border={borderColor}
@@ -2147,22 +2235,24 @@ export default function RoboticsMonitoringDashboard(
       <main
         style={{
           width: "100%",
-          flex: 1,
-          minHeight: 0,
+          flex: stackMainColumns ? "none" : 1,
+          minHeight: stackMainColumns ? undefined : 0,
           display: "grid",
-          gridTemplateColumns: showDetailPanel
-            ? "minmax(540px, 1.45fr) minmax(420px, 1fr)"
-            : "1fr",
-          gap: 12,
+          gridTemplateColumns: stackMainColumns
+            ? "1fr"
+            : showDetailPanel
+              ? "minmax(540px, 1.45fr) minmax(420px, 1fr)"
+              : "1fr",
+          gap: isCompactLayout ? 10 : 12,
         }}
       >
         <section
           aria-label="Devices"
           style={{
-            minHeight: 0,
+            minHeight: stackMainColumns ? undefined : 0,
             display: "flex",
             flexDirection: "column",
-            gap: 12,
+            gap: isCompactLayout ? 10 : 12,
           }}
         >
           <div
@@ -2204,18 +2294,18 @@ export default function RoboticsMonitoringDashboard(
                   textOverflow: "ellipsis",
                 }}
               >
-                총 장비 {derivedDevices.length}대
+                총 장비 {registeredFleetDevices.length}대
               </div>
             </div>
           </div>
 
           <div
             style={{
-              flex: 1,
-              minHeight: 0,
+              flex: stackMainColumns ? "none" : 1,
+              minHeight: stackMainColumns ? undefined : 0,
               display: "flex",
               flexDirection: "column",
-              gap: 12,
+              gap: isCompactLayout ? 10 : 12,
             }}
           >
             <div
@@ -2335,8 +2425,8 @@ export default function RoboticsMonitoringDashboard(
           <aside
             aria-label="Copilot panel"
             style={{
-              minHeight: 0,
-              height: "100%",
+              minHeight: stackMainColumns ? 420 : 0,
+              height: stackMainColumns ? "auto" : "100%",
               borderRadius: 14,
               background: panelBackground,
               border: `1px solid ${borderColor}`,
@@ -5033,7 +5123,8 @@ export default function RoboticsMonitoringDashboard(
                     color: textPrimary,
                   }}
                 >
-                  장애 이벤트 목록 ({outageModalEventRows.length})
+                  장애 이벤트 목록 (CRITICAL {dashboardCriticalOutageCount} / 전체{" "}
+                  {dashboardOutageEventRows.length})
                 </div>
                 <button
                   type="button"
@@ -5098,7 +5189,7 @@ export default function RoboticsMonitoringDashboard(
                       {outageModalError}
                     </span>
                   </div>
-                ) : outageModalEventRows.length === 0 ? (
+                ) : dashboardOutageEventRows.length === 0 ? (
                   <div
                     style={{
                       padding: 14,
