@@ -69,6 +69,20 @@
   flex-direction: column;
 }
 
+@media (max-width: 767px) {
+  #root {
+    height: auto;
+    min-height: 100svh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-dashboard-root {
+    min-height: 100svh;
+  }
+}
+
 body {
   margin: 0;
 }
