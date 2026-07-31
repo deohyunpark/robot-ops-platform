@@ -47,14 +47,22 @@ jobs:
       - name: Grant Gradle permission
         run: chmod +x gradlew
 
+      - name: Check PostgreSQL
+        env:
+          PGPASSWORD: app
+        run: |
+          pg_isready -h localhost -p 5432 -U app -d robotops
+          psql -h localhost -p 5432 -U app -d robotops -c "SELECT 1;"
+
       - name: Run backend tests
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/robotops
           SPRING_DATASOURCE_USERNAME: app
           SPRING_DATASOURCE_PASSWORD: app
+          SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
           OPENAI_API_KEY: test-key
         run: ./gradlew clean test --stacktrace
-   
+
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
