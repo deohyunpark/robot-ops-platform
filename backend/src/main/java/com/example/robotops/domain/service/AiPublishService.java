@@ -1,7 +1,7 @@
 package com.example.robotops.domain.service;
 
 import com.example.robotops.domain.response.InsightFeedResponse;
-import com.example.robotops.infra.kafka.consumer.KafkaProducer;
+import com.example.robotops.infra.kafka.producer.KafkaProducer;
 import com.example.robotops.infra.redis.RedisService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

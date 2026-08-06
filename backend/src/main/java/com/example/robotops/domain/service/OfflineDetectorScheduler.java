@@ -55,13 +55,28 @@ public class OfflineDetectorScheduler {
                     Map.of("lastSeen", lastSeen,
                             "now", now));
 
-            boolean success = kafkaProducer.sendDeviceEvent(deviceEvent);
+            //중복방지
+            kafkaProducer.sendDeviceEvent(deviceEvent)
+                    .thenAccept(result -> {
+                        redisService.deleteOfflineDevice(deviceId);
+                        kafkaProducer.sendOfflineList(deviceId);
 
-            // 3. 중복 방지
-            if (success) {
-                redisService.deleteOfflineDevice(deviceId);
-                kafkaProducer.sendOfflineList(deviceId);
-            }
+                        log.info(
+                                "Offline event published. deviceId={}, partition={}, offset={}",
+                                deviceId,
+                                result.getRecordMetadata().partition(),
+                                result.getRecordMetadata().offset()
+                        );
+                    })
+                    .exceptionally(exception -> {
+                        log.error(
+                                "Failed to publish offline event. deviceId={}",
+                                deviceId,
+                                exception
+                        );
+
+                        return null;
+                    });
         }
     }
 }
