@@ -1,4 +1,4 @@
-package com.example.robotops.infra.kafka.producer;
+package com.example.robotops.infra.kafka.consumer;
 
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
@@ -6,7 +6,7 @@ import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.service.event.EventContext;
 import com.example.robotops.domain.service.event.EventEngine;
 import com.example.robotops.domain.service.event.RedisSnapshotBuilder;
-import com.example.robotops.infra.kafka.consumer.KafkaProducer;
+import com.example.robotops.infra.kafka.producer.KafkaProducer;
 import com.example.robotops.infra.redis.JsonUtil;
 import com.example.robotops.infra.redis.RedisSyncService;
 import java.util.List;

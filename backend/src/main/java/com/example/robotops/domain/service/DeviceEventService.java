@@ -5,7 +5,7 @@ import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.repository.DeviceEventRepository;
 import com.example.robotops.domain.response.RedisEventResponse;
 import com.example.robotops.global.errorMessage.StringEnum;
-import com.example.robotops.infra.kafka.consumer.KafkaProducer;
+import com.example.robotops.infra.kafka.producer.KafkaProducer;
 import com.example.robotops.infra.redis.RedisService;
 import jakarta.transaction.Transactional;
 import java.time.Instant;

@@ -7,7 +7,7 @@ import com.example.robotops.domain.entity.MissionHistoryLog;
 import com.example.robotops.domain.repository.MissionCurrentRepository;
 import com.example.robotops.domain.repository.MissionHistoryLogRepository;
 import com.example.robotops.global.errorMessage.StringEnum;
-import com.example.robotops.infra.kafka.consumer.KafkaProducer;
+import com.example.robotops.infra.kafka.producer.KafkaProducer;
 import com.example.robotops.infra.redis.RedisService;
 import java.time.Duration;
 import java.time.OffsetDateTime;

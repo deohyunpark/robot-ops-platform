@@ -3,7 +3,7 @@ package com.example.robotops.domain.service;
 import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.deviceStateType.Severity;
 import com.example.robotops.domain.entity.DeviceEvent;
-import com.example.robotops.infra.kafka.consumer.KafkaProducer;
+import com.example.robotops.infra.kafka.producer.KafkaProducer;
 import com.example.robotops.infra.redis.RedisService;
 import java.util.Map;
 import java.util.Set;

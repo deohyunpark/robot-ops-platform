@@ -1,4 +1,4 @@
-package com.example.robotops.infra.kafka.consumer;
+package com.example.robotops.infra.kafka.producer;
 
 import com.example.robotops.application.telemetry.request.TelemetryRawRequest;
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
