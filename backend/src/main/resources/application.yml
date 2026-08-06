@@ -37,3 +37,17 @@ app:
 openai:
   api-key: ${OPENAI_API_KEY}
   model: gpt-5-mini
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+
+  endpoint:
+    health:
+      show-details: always
+
+  metrics:
+    tags:
+      application: robot-ops-backend
