@@ -6,14 +6,12 @@ import lombok.Builder;
 @Builder
 public record DeviceSummaryResponse(
         DeviceStateResponse deviceStateResponse,
-        List<DeviceEventResponse> deviceEventResponseList,
-        AiAnalysisResponse aiAnalysisResponse
+        List<DeviceEventResponse> deviceEventResponseList
 ) {
-    public static DeviceSummaryResponse of(DeviceStateResponse deviceStateResponse, List<DeviceEventResponse> deviceEventResponseList, AiAnalysisResponse aiAnalysisResponse) {
+    public static DeviceSummaryResponse of(DeviceStateResponse deviceStateResponse, List<DeviceEventResponse> deviceEventResponseList) {
         return DeviceSummaryResponse.builder()
                 .deviceStateResponse(deviceStateResponse)
                 .deviceEventResponseList(deviceEventResponseList)
-                .aiAnalysisResponse(aiAnalysisResponse)
                 .build();
     }
 }

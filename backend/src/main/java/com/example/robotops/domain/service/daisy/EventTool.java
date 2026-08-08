@@ -8,10 +8,12 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class EventTool {
@@ -57,7 +59,20 @@ public class EventTool {
         OffsetDateTime from = Optional.ofNullable(request.from())
                 .orElse(to.minusHours(24));
 
-        return deviceEventRepository.findDeviceByRequest(request.robotId(), request.eventType(), from, to);
+        log.info(
+                "[DAISY TOOL] getRecentRobotEvents called. deviceId={}",
+                request.robotId()
+        );
+
+        List<DeviceEventResponse> result = deviceEventRepository.findDeviceByRequest(request.robotId(),
+                request.eventType(), from, to);
+
+        log.info(
+                "[DAISY TOOL] getDeviceSummary result={}",
+                result
+        );
+
+        return result;
     }
 
 

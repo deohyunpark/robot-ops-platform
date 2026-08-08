@@ -14,9 +14,21 @@ import {
   postDemoStop,
   type DemoStatusResponse,
 } from "../../services/dashboardDemo"
-import { getDaisyChatUserMessage, postDaisyChat } from "../../services/daisyChat"
+import {
+  downloadDaisyDailyReportPdf,
+  getDailyReportPdfUserMessage,
+  getDaisyChatUserMessage,
+  isDailyReportChatRequest,
+  postDaisyChat,
+  type DaisyChatMessage,
+} from "../../services/daisyChat"
+import { DaisyChatDailyReportPdfButton } from "./DaisyChatDailyReportPdfButton"
 import { DaisyChatInsertHint } from "./DaisyChatInsertHint"
 import { DaisyChatMessageBody } from "./DaisyChatMessageBody"
+import {
+  DaisyChatSuggestedQuestions,
+  type DaisySuggestedQuestion,
+} from "./DaisyChatSuggestedQuestions"
 import { DaisyChatTypingIndicator } from "./DaisyChatTypingIndicator"
 import { fetchDashboardAllEvents } from "../../services/dashboardAllEvents"
 import { fetchDashboardDeviceEvents } from "../../services/dashboardDeviceEvents"
@@ -56,16 +68,16 @@ import type {
 import {
   deviceEventFeedRowToBackendEvent,
   backendEventToFeedRow,
+  deviceEventsFeedFromPayload,
   filterCriticalEventRows,
-  fleetEventRowsFromPayload,
   groupInsightFeedByRobot,
   insightFeedItemsFromPayload,
+  isDeviceEventsStompDestination,
   isInsightFeedPayload,
   isInsightFeedStompDestination,
   mergeLatestFleetEventsByDevice,
   mergeInsightFeedItems,
   offlineEventBatchFromPayload,
-  redisOfflineEventToFeedRow,
   telemetryBatchToDevices,
   throughputFromPayload,
   totalUtilizationFromPayload,
@@ -339,9 +351,7 @@ export default function RoboticsMonitoringDashboard(
   const [fleetHoverMenu, setFleetHoverMenu] = useState<"mission" | "event" | null>(null)
   const [selectedMissionFilter, setSelectedMissionFilter] = useState<string>("ALL")
   const [selectedEventTypeFilter, setSelectedEventTypeFilter] = useState<string>("ALL")
-  const [chatMessages, setChatMessages] = useState<
-    { role: "user" | "assistant"; text: string; ts: string }[]
-  >(() => {
+  const [chatMessages, setChatMessages] = useState<DaisyChatMessage[]>(() => {
     const now = new Date()
     const ts = now.toLocaleTimeString([], {
       hour: "2-digit",
@@ -391,22 +401,44 @@ export default function RoboticsMonitoringDashboard(
   const chatInputRef = useRef<HTMLInputElement | null>(null)
   const chatInputFocusedRef = useRef(false)
   const [chatInputFocused, setChatInputFocused] = useState(false)
+  const [dailyReportPdfLoading, setDailyReportPdfLoading] = useState(false)
+  const [dailyReportPdfError, setDailyReportPdfError] = useState<string | null>(null)
+  const dailyReportPdfAbortRef = useRef<AbortController | null>(null)
   const fleetHoverCloseTimerRef = useRef<number | null>(null)
   const deviceSource = useMemo(() => liveDevices ?? [], [liveDevices])
 
   const ingestFleetEventRows = useCallback((rows: DeviceEventFeedRow[]) => {
+    if (!rows.length) return
     const pinned = activeOutageDeviceIdsRef.current
-    const filtered = pinned.size
+    const forDisplay = pinned.size
       ? rows.filter((row) => !pinned.has(row.deviceId))
       : rows
-    if (!filtered.length) return
     startTransition(() => {
-      setLatestFleetEventsByDevice((prev) =>
-        mergeLatestFleetEventsByDevice(prev, filtered)
-      )
+      if (forDisplay.length) {
+        setLatestFleetEventsByDevice((prev) =>
+          mergeLatestFleetEventsByDevice(prev, forDisplay)
+        )
+        setLiveDevices((prev) => {
+          const byId = new Map((prev ?? []).map((d) => [d.id, d]))
+          for (const row of forDisplay) {
+            const patch = {
+              lastEventType: row.eventType,
+              lastEventSeverity: row.severity,
+            }
+            const old = byId.get(row.deviceId)
+            byId.set(
+              row.deviceId,
+              old
+                ? { ...old, ...patch }
+                : { ...fleetDeviceStub(row.deviceId, "Online"), ...patch }
+            )
+          }
+          return Array.from(byId.values())
+        })
+      }
       setDeviceEvents((prev) => {
         const next = { ...prev }
-        for (const row of filtered) {
+        for (const row of rows) {
           const list = next[row.deviceId] ?? []
           next[row.deviceId] = [
             ...list,
@@ -414,23 +446,6 @@ export default function RoboticsMonitoringDashboard(
           ].slice(-30)
         }
         return next
-      })
-      setLiveDevices((prev) => {
-        const byId = new Map((prev ?? []).map((d) => [d.id, d]))
-        for (const row of filtered) {
-          const patch = {
-            lastEventType: row.eventType,
-            lastEventSeverity: row.severity,
-          }
-          const old = byId.get(row.deviceId)
-          byId.set(
-            row.deviceId,
-            old
-              ? { ...old, ...patch }
-              : { ...fleetDeviceStub(row.deviceId, "Online"), ...patch }
-          )
-        }
-        return Array.from(byId.values())
       })
     })
   }, [])
@@ -560,12 +575,14 @@ export default function RoboticsMonitoringDashboard(
         )
       }
 
-      const fleetEventRows = fleetEventRowsFromPayload(payload)
-      if (fleetEventRows.length) {
-        noteDemoMqttActivity()
-        scheduleKpiRefreshFromDeviceList()
-        ingestFleetEventRows(fleetEventRows)
-        ingestCriticalOutageRows(fleetEventRows)
+      if (isDeviceEventsStompDestination(meta?.destination)) {
+        const eventRows = deviceEventsFeedFromPayload(payload)
+        if (eventRows.length) {
+          noteDemoMqttActivity()
+          scheduleKpiRefreshFromDeviceList()
+          ingestFleetEventRows(eventRows)
+          ingestCriticalOutageRows(eventRows)
+        }
       }
 
       const throughput = throughputFromPayload(payload)
@@ -587,12 +604,6 @@ export default function RoboticsMonitoringDashboard(
           applyOfflineDeviceIds(
             offlineEvents.map((e) => e.deviceId),
             "merge"
-          )
-          ingestFleetEventRows(
-            offlineEvents.map((event) => redisOfflineEventToFeedRow(event))
-          )
-          ingestCriticalOutageRows(
-            offlineEvents.map((event) => redisOfflineEventToFeedRow(event))
           )
         }
       }
@@ -715,6 +726,86 @@ export default function RoboticsMonitoringDashboard(
   const demoRunning = demoExpiresAt !== null && demoExpiresAt > demoNow
   const demoRemainingMs = demoRunning ? demoExpiresAt - demoNow : 0
 
+  const chatSuggestedQuestions = useMemo(
+    (): DaisySuggestedQuestion[] =>
+      language === "ko"
+        ? [
+            {
+              id: "daily-report",
+              label: "오늘 운영 리포트",
+              text: "오늘 하루 운영 리포트를 정리해줘",
+            },
+            {
+              id: "events-today",
+              label: "오늘 이벤트 요약",
+              text: "오늘 발생한 이벤트를 요약해줘",
+            },
+            {
+              id: "critical-outages",
+              label: "CRITICAL 장애",
+              text: "현재 CRITICAL 장애가 있는 장비를 알려줘",
+            },
+            {
+              id: "offline-devices",
+              label: "오프라인 장비",
+              text: "오프라인 장비 목록을 알려줘",
+            },
+            {
+              id: "fleet-summary",
+              label: "플릿 상태 요약",
+              text: "플릿 전체 상태를 요약해줘",
+            },
+            {
+              id: "low-battery",
+              label: "저전력 장비",
+              text: "배터리가 낮은 장비를 알려줘",
+            },
+            {
+              id: "hot-devices",
+              label: "고온 장비",
+              text: "온도가 높은 장비를 알려줘",
+            },
+          ]
+        : [
+            {
+              id: "daily-report",
+              label: "Daily ops report",
+              text: "Summarize today's daily operations report",
+            },
+            {
+              id: "events-today",
+              label: "Today's events",
+              text: "Summarize today's events",
+            },
+            {
+              id: "critical-outages",
+              label: "CRITICAL outages",
+              text: "Which devices currently have CRITICAL outages?",
+            },
+            {
+              id: "offline-devices",
+              label: "Offline devices",
+              text: "List offline devices",
+            },
+            {
+              id: "fleet-summary",
+              label: "Fleet summary",
+              text: "Summarize overall fleet status",
+            },
+            {
+              id: "low-battery",
+              label: "Low battery",
+              text: "List devices with low battery",
+            },
+            {
+              id: "hot-devices",
+              label: "Hot devices",
+              text: "List devices with high temperature",
+            },
+          ],
+    [language]
+  )
+
   const ui = useMemo(() => {
     const ko = language === "ko"
     return {
@@ -733,12 +824,15 @@ export default function RoboticsMonitoringDashboard(
       mapTagMission: ko ? "상태" : "Status",
       mapTagEvent: ko ? "이벤트" : "Event",
       mapFilterAll: ko ? "전체" : "All",
-      quickActions: ko ? "빠른 질문" : "Quick actions",
-      qaFleetSummary: ko ? "플릿 요약" : "Fleet summary",
-      qaTopRisks: ko ? "리스크 상위" : "Top risks",
-      qaOfflineList: ko ? "오프라인 목록" : "Offline list",
-      qaHotList: ko ? "고온 목록" : "Hot list",
-      qaLowBatteryList: ko ? "저전력 목록" : "Low battery list",
+      chatSuggestedTitle: ko ? "추천 질문" : "Suggested questions",
+      chatSuggestedSubtitle: ko
+        ? "아래 질문을 누르면 Daisy가 바로 답변합니다."
+        : "Tap a question to ask Daisy instantly.",
+      chatDailyReportPdf: ko ? "PDF 리포트 다운로드" : "Download PDF report",
+      chatDailyReportPdfLoading: ko ? "PDF 생성 중…" : "Generating PDF…",
+      chatDailyReportPdfHint: ko
+        ? "공식 일일 운영 PDF를 받을 수 있습니다."
+        : "Download the official daily operations PDF.",
       kpiTotal: ko ? "총 장비" : "Total Devices",
       kpiOnlineOffline: ko ? "온라인 / 오프라인" : "Online / Offline",
       kpiAvgBattery: ko ? "고온 장비 수" : "Hot Devices",
@@ -991,7 +1085,15 @@ export default function RoboticsMonitoringDashboard(
     [activeOutageEventsByDeviceMap]
   )
 
-  /** 플릿 개요 이벤트 — 미해결 장애 KPI 우선, 그 외 WS */
+  /** KPI·모달 공통 — 미해결 CRITICAL (디바이스당 1건) */
+  const outageKpiRows = useMemo(
+    () => criticalOutageRows(Object.values(activeOutageEventsByDeviceMap)),
+    [activeOutageEventsByDeviceMap]
+  )
+
+  const activeOutageCount = outageKpiRows.length
+
+  /** 플릿 이벤트 — 미해결 CRITICAL 장애 KPI 우선, 그 외 /robot/device/events */
   const fleetEventsForDisplay = useMemo(
     () => ({
       ...latestFleetEventsByDevice,
@@ -1315,7 +1417,7 @@ export default function RoboticsMonitoringDashboard(
   const selectedEventAck = useMemo(() => {
     if (!selectedOutageEvent) return defaultAckState()
     const key = outageEventRowKey(selectedOutageEvent)
-    return eventAckByKey[key] ?? defaultAckState()
+    return { ...defaultAckState(), ...(eventAckByKey[key] ?? {}) }
   }, [selectedOutageEvent, eventAckByKey])
 
   const handleEventAck = useCallback(
@@ -1327,11 +1429,14 @@ export default function RoboticsMonitoringDashboard(
         const next = {
           ...prev,
           [key]: {
+            ...defaultAckState(),
+            ...(prev[key] ?? {}),
             acknowledged: true,
             assignee,
             acknowledgedAt: now,
             resolved: prev[key]?.resolved ?? false,
             resolvedAt: prev[key]?.resolvedAt ?? "",
+            resolutionDescription: prev[key]?.resolutionDescription ?? "",
           },
         }
         saveEventAckMap(next)
@@ -1341,27 +1446,34 @@ export default function RoboticsMonitoringDashboard(
     [selectedOutageEvent]
   )
 
-  const handleEventResolve = useCallback(() => {
-    if (!selectedOutageEvent) return
-    const key = outageEventRowKey(selectedOutageEvent)
-    const now = new Date().toISOString()
-    setEventAckByKey((prev) => {
-      const existing = prev[key] ?? defaultAckState()
-      const next = {
-        ...prev,
-        [key]: {
-          ...existing,
-          acknowledged: true,
-          acknowledgedAt: existing.acknowledgedAt || now,
-          assignee: existing.assignee || "—",
-          resolved: true,
-          resolvedAt: now,
-        },
-      }
-      saveEventAckMap(next)
-      return next
-    })
-  }, [selectedOutageEvent])
+  const handleEventResolve = useCallback(
+    (description: string) => {
+      if (!selectedOutageEvent) return
+      const trimmed = description.trim()
+      if (!trimmed) return
+      const key = outageEventRowKey(selectedOutageEvent)
+      const now = new Date().toISOString()
+      setEventAckByKey((prev) => {
+        const existing = { ...defaultAckState(), ...(prev[key] ?? {}) }
+        if (!existing.acknowledged) return prev
+        const next = {
+          ...prev,
+          [key]: {
+            ...existing,
+            acknowledged: true,
+            acknowledgedAt: existing.acknowledgedAt || now,
+            assignee: existing.assignee || "—",
+            resolved: true,
+            resolvedAt: now,
+            resolutionDescription: trimmed,
+          },
+        }
+        saveEventAckMap(next)
+        return next
+      })
+    },
+    [selectedOutageEvent]
+  )
 
   const closeModal = useCallback(() => {
     startTransition(() => setModalOpen(false))
@@ -1437,8 +1549,8 @@ export default function RoboticsMonitoringDashboard(
     startTransition(() => setChatOpen(false))
   }, [])
 
-  const sendChat = useCallback(async () => {
-    const text = chatInput.trim()
+  const sendChat = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? chatInput).trim()
     if (!text || chatSending) return
 
     const ts = new Date().toLocaleTimeString([], {
@@ -1448,6 +1560,7 @@ export default function RoboticsMonitoringDashboard(
 
     setChatMessages((m) => [...m, { role: "user", text, ts }])
     setChatInput("")
+    setDailyReportPdfError(null)
     setChatSending(true)
 
     chatAbortRef.current?.abort()
@@ -1460,9 +1573,10 @@ export default function RoboticsMonitoringDashboard(
         hour: "2-digit",
         minute: "2-digit",
       })
+      const showDailyReportPdf = isDailyReportChatRequest(text)
       setChatMessages((m) => [
         ...m,
-        { role: "assistant", text: answer, ts: replyTs },
+        { role: "assistant", text: answer, ts: replyTs, showDailyReportPdf },
       ])
     } catch (err) {
       if (controller.signal.aborted) return
@@ -1485,6 +1599,59 @@ export default function RoboticsMonitoringDashboard(
       setChatSending(false)
     }
   }, [chatInput, chatSending, language])
+
+  const latestDailyReportPdfMessageIndex = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i -= 1) {
+      if (chatMessages[i].showDailyReportPdf) return i
+    }
+    return -1
+  }, [chatMessages])
+
+  const downloadDailyReportPdf = useCallback(async () => {
+    if (dailyReportPdfLoading) return
+
+    setDailyReportPdfError(null)
+    setDailyReportPdfLoading(true)
+    dailyReportPdfAbortRef.current?.abort()
+
+    const controller = new AbortController()
+    dailyReportPdfAbortRef.current = controller
+
+    try {
+      await downloadDaisyDailyReportPdf(controller.signal)
+    } catch (err) {
+      if (controller.signal.aborted) return
+      setDailyReportPdfError(
+        getDailyReportPdfUserMessage(err, language === "ko" ? "ko" : "en")
+      )
+    } finally {
+      if (dailyReportPdfAbortRef.current === controller) {
+        dailyReportPdfAbortRef.current = null
+      }
+      setDailyReportPdfLoading(false)
+    }
+  }, [dailyReportPdfLoading, language])
+
+  const renderDailyReportPdfButton = (show: boolean | undefined) => {
+    if (!show) return null
+    return (
+      <DaisyChatDailyReportPdfButton
+        label={ui.chatDailyReportPdf}
+        loadingLabel={ui.chatDailyReportPdfLoading}
+        hint={ui.chatDailyReportPdfHint}
+        error={dailyReportPdfError}
+        loading={dailyReportPdfLoading}
+        disabled={chatSending}
+        onDownload={() => void downloadDailyReportPdf()}
+        bodyFont={bodyFont}
+        monoFont={monoFont}
+        textPrimary={textPrimary}
+        textSecondary={textSecondary}
+        statusError={statusError}
+        accent={accent}
+      />
+    )
+  }
 
   const visibleInsightFeedItems = useMemo(
     () =>
@@ -1806,14 +1973,13 @@ export default function RoboticsMonitoringDashboard(
     onlineOfflineApiCounts,
   ])
 
-  const dashboardCriticalOutageCount = dashboardOutageEventRows.length
   const outageKpiAlertActive =
-    dashboardAllEventsBootstrapped && dashboardCriticalOutageCount > 0
+    dashboardAllEventsBootstrapped && activeOutageCount > 0
 
   useEffect(() => {
     if (!dashboardAllEventsBootstrapped) return
 
-    const keys = new Set(dashboardOutageEventRows.map(outageEventRowKey))
+    const keys = new Set(outageKpiRows.map(outageEventRowKey))
     const prev = prevOutageKeysRef.current
 
     if (prev === null) {
@@ -1850,12 +2016,12 @@ export default function RoboticsMonitoringDashboard(
       setOutageKpiBlink(false)
       outageKpiBlinkTimerRef.current = null
     }, 12000)
-  }, [dashboardAllEventsBootstrapped, dashboardOutageEventRows])
+  }, [dashboardAllEventsBootstrapped, outageKpiRows])
 
   const kpiOutageValue = useMemo(() => {
     if (!dashboardAllEventsBootstrapped) return "…"
-    return String(dashboardCriticalOutageCount)
-  }, [dashboardAllEventsBootstrapped, dashboardCriticalOutageCount])
+    return String(activeOutageCount)
+  }, [dashboardAllEventsBootstrapped, activeOutageCount])
 
   const throughputChartPoints = useMemo(() => {
     const sortedChart = [...(throughputData?.chart ?? [])].sort((a, b) => {
@@ -2111,8 +2277,14 @@ export default function RoboticsMonitoringDashboard(
     fetchDashboardAllEvents(ac.signal)
       .then((rows) => {
         if (ac.signal.aborted) return
-        const fromApi = criticalOutageRows(rows)
-        setDashboardOutageEventRows((prev) => mergeOutageEventRows(fromApi, prev))
+        startTransition(() => {
+          setLatestFleetEventsByDevice((prev) =>
+            mergeLatestFleetEventsByDevice(prev, rows)
+          )
+          setDashboardOutageEventRows((prev) =>
+            mergeOutageEventRows(criticalOutageRows(rows), prev)
+          )
+        })
       })
       .catch((e) => {
         if (ac.signal.aborted) return
@@ -2184,13 +2356,7 @@ export default function RoboticsMonitoringDashboard(
         const offlineIds = offlineEvents
           .map((e) => e.deviceId)
           .filter((id): id is string => Boolean(id))
-        const offlineFeedRows = offlineEvents.map((event) =>
-          redisOfflineEventToFeedRow(event)
-        )
-        const mergedFleetEvents = mergeLatestFleetEventsByDevice(
-          mergeLatestFleetEventsByDevice({}, allEventRows),
-          offlineFeedRows
-        )
+        const initialFleetEvents = mergeLatestFleetEventsByDevice({}, allEventRows)
         startTransition(() => {
           setDashboardDeviceIds(ids)
           setDashboardDeviceListReady(true)
@@ -2201,7 +2367,7 @@ export default function RoboticsMonitoringDashboard(
             Array.from(offlineSet).sort((a, b) => a.localeCompare(b))
           )
           setDashboardOfflineBootstrapped(true)
-          setLatestFleetEventsByDevice(mergedFleetEvents)
+          setLatestFleetEventsByDevice(initialFleetEvents)
           setDashboardOutageEventRows(criticalOutageRows(allEventRows))
           setDashboardAllEventsBootstrapped(true)
           setInsightFeedItems(mergeInsightFeedItems([], feedRows))
@@ -2227,7 +2393,7 @@ export default function RoboticsMonitoringDashboard(
                 updatedAt: now,
               })
             }
-            for (const row of Object.values(mergedFleetEvents)) {
+            for (const row of Object.values(initialFleetEvents)) {
               const old = byId.get(row.deviceId)
               const patch = {
                 lastEventType: row.eventType,
@@ -2731,7 +2897,7 @@ export default function RoboticsMonitoringDashboard(
             value={kpiOutageValue}
             hint=""
             color={
-              dashboardCriticalOutageCount > 0 ? statusError : accent
+              activeOutageCount > 0 ? statusError : accent
             }
             bg={cardBackground}
             border={borderColor}
@@ -3684,6 +3850,22 @@ export default function RoboticsMonitoringDashboard(
                       gap: 10,
                     }}
                   >
+                    {!chatMessages.length && !chatSending ? (
+                      <DaisyChatSuggestedQuestions
+                        variant="empty"
+                        title={ui.chatSuggestedTitle}
+                        subtitle={ui.chatSuggestedSubtitle}
+                        questions={chatSuggestedQuestions}
+                        onSelect={(text) => void sendChat(text)}
+                        disabled={chatSending}
+                        bodyFont={bodyFont}
+                        textPrimary={textPrimary}
+                        textSecondary={textSecondary}
+                        accent={accent}
+                        borderColor={borderColor}
+                        cardBackground={cardBackground}
+                      />
+                    ) : null}
                     {chatMessages.map((m, idx) => {
                       const isUser = m.role === "user"
                       const bubbleBg = isUser ? withAlpha(accent, 0.18) : cardBackground
@@ -3716,6 +3898,9 @@ export default function RoboticsMonitoringDashboard(
                               statusWarning={statusWarning}
                               accent={accent}
                             />
+                            {renderDailyReportPdfButton(
+                              m.showDailyReportPdf && idx === latestDailyReportPdfMessageIndex
+                            )}
                             <div
                               style={{
                                 marginTop: 6,
@@ -3745,6 +3930,21 @@ export default function RoboticsMonitoringDashboard(
                     data-daisy-chat-insert-area
                     style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}
                   >
+                    {chatMessages.length && !chatSending ? (
+                      <DaisyChatSuggestedQuestions
+                        variant="compact"
+                        title={ui.chatSuggestedTitle}
+                        questions={chatSuggestedQuestions}
+                        onSelect={(text) => void sendChat(text)}
+                        disabled={chatSending}
+                        bodyFont={bodyFont}
+                        textPrimary={textPrimary}
+                        textSecondary={textSecondary}
+                        accent={accent}
+                        borderColor={borderColor}
+                        cardBackground={cardBackground}
+                      />
+                    ) : null}
                     {chatInputFocused ? (
                       <DaisyChatInsertHint
                         text={ui.chatInsertHint}
@@ -3794,7 +3994,9 @@ export default function RoboticsMonitoringDashboard(
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
                       onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => void sendChat()}
+                      onClick={() => {
+                        void sendChat()
+                      }}
                       disabled={chatSending || !chatInput.trim()}
                       aria-label={ui.send}
                       aria-busy={chatSending}
@@ -3900,8 +4102,7 @@ export default function RoboticsMonitoringDashboard(
                       <button
                         type="button"
                         onClick={() => {
-                          const row =
-                            fleetEventsForDisplay[selectedWithFleetEvent.id]
+                          const row = fleetEventsForDisplay[selectedWithFleetEvent.id]
                           if (row) openEventDetail(row)
                         }}
                         style={{
@@ -5728,7 +5929,7 @@ export default function RoboticsMonitoringDashboard(
                     color: textPrimary,
                   }}
                 >
-                  장애 이벤트 목록 (CRITICAL {dashboardCriticalOutageCount})
+                  장애 이벤트 목록 (CRITICAL {activeOutageCount})
                 </div>
                 <button
                   type="button"
@@ -5793,7 +5994,7 @@ export default function RoboticsMonitoringDashboard(
                       {outageModalError}
                     </span>
                   </div>
-                ) : dashboardOutageEventRows.length === 0 ? (
+                ) : outageKpiRows.length === 0 ? (
                   <div
                     style={{
                       padding: 14,
@@ -5802,7 +6003,7 @@ export default function RoboticsMonitoringDashboard(
                       fontSize: coerceFontSize(bodyFont?.fontSize, 14),
                     }}
                   >
-                    이벤트 데이터가 없습니다.
+                    {ui.outageEmptyTab}
                   </div>
                 ) : (
                   <div
@@ -5842,19 +6043,7 @@ export default function RoboticsMonitoringDashboard(
                         role="rowgroup"
                         style={{ maxHeight: 420, overflow: "auto" }}
                       >
-                        {dashboardOutageEventRows.length === 0 ? (
-                          <div
-                            style={{
-                              padding: 14,
-                              color: textSecondary,
-                              ...bodyFont,
-                              fontSize: coerceFontSize(bodyFont?.fontSize, 14),
-                            }}
-                          >
-                            {ui.outageEmptyTab}
-                          </div>
-                        ) : (
-                          dashboardOutageEventRows.map((row) => {
+                        {outageKpiRows.map((row) => {
                             const sevColor = statusError
                             return (
                               <div
@@ -5928,8 +6117,7 @@ export default function RoboticsMonitoringDashboard(
                                 </span>
                               </div>
                             )
-                          })
-                        )}
+                          })}
                       </div>
                     </div>
                 )}
@@ -6083,6 +6271,22 @@ export default function RoboticsMonitoringDashboard(
                   gap: 10,
                 }}
               >
+                {!chatMessages.length && !chatSending ? (
+                  <DaisyChatSuggestedQuestions
+                    variant="empty"
+                    title={ui.chatSuggestedTitle}
+                    subtitle={ui.chatSuggestedSubtitle}
+                    questions={chatSuggestedQuestions}
+                    onSelect={(text) => void sendChat(text)}
+                    disabled={chatSending}
+                    bodyFont={bodyFont}
+                    textPrimary={textPrimary}
+                    textSecondary={textSecondary}
+                    accent={accent}
+                    borderColor={borderColor}
+                    cardBackground={cardBackground}
+                  />
+                ) : null}
                 {chatMessages.map((m, idx) => {
                   const isUser = m.role === "user"
                   const bubbleBg = isUser
@@ -6122,6 +6326,9 @@ export default function RoboticsMonitoringDashboard(
                           statusWarning={statusWarning}
                           accent={accent}
                         />
+                        {renderDailyReportPdfButton(
+                          m.showDailyReportPdf && idx === latestDailyReportPdfMessageIndex
+                        )}
                         <div
                           style={{
                             marginTop: 6,
@@ -6157,6 +6364,21 @@ export default function RoboticsMonitoringDashboard(
                   gap: 10,
                 }}
               >
+                {chatMessages.length && !chatSending ? (
+                  <DaisyChatSuggestedQuestions
+                    variant="compact"
+                    title={ui.chatSuggestedTitle}
+                    questions={chatSuggestedQuestions}
+                    onSelect={(text) => void sendChat(text)}
+                    disabled={chatSending}
+                    bodyFont={bodyFont}
+                    textPrimary={textPrimary}
+                    textSecondary={textSecondary}
+                    accent={accent}
+                    borderColor={borderColor}
+                    cardBackground={cardBackground}
+                  />
+                ) : null}
                 {chatInputFocused ? (
                   <DaisyChatInsertHint
                     text={ui.chatInsertHint}
@@ -6210,7 +6432,9 @@ export default function RoboticsMonitoringDashboard(
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onPointerDown={(e) => e.preventDefault()}
-                  onClick={() => void sendChat()}
+                  onClick={() => {
+                    void sendChat()
+                  }}
                   disabled={chatSending || !chatInput.trim()}
                   aria-label={ui.send}
                   aria-busy={chatSending}

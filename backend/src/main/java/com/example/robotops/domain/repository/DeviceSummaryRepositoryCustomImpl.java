@@ -1,6 +1,5 @@
 package com.example.robotops.domain.repository;
 
-import com.example.robotops.domain.response.AiAnalysisResponse;
 import com.example.robotops.domain.response.DeviceEventResponse;
 import com.example.robotops.domain.response.DeviceStateResponse;
 import com.example.robotops.domain.response.DeviceSummaryResponse;
@@ -17,7 +16,6 @@ public class DeviceSummaryRepositoryCustomImpl implements DeviceSummaryRepositor
 
     private final RedisService redisService;
     private final DeviceEventRepository deviceEventRepository;
-    private final AiAnalysisRepository aiAnalysisRepository;
 
     @Override
     public DeviceSummaryResponse getDeviceSummary(String deviceId) {
@@ -28,11 +26,7 @@ public class DeviceSummaryRepositoryCustomImpl implements DeviceSummaryRepositor
         List<DeviceEventResponse> allUnresolvedDeviceEvents = deviceEventRepository.findAllUnresolvedDeviceEvents(deviceId)
                 .stream().map(DeviceEventResponse::of).toList();
 
-        AiAnalysisResponse aiAnalysisResponse = AiAnalysisResponse.of(
-                aiAnalysisRepository.findTopByRobotIdOrderByCreatedAtDesc(deviceId).orElseThrow(
-                        () -> new RobotOpsException(ErrorCode.INSIGHT_NOT_FOUND)
-                ));
 
-        return DeviceSummaryResponse.of(deviceStateResponse, allUnresolvedDeviceEvents, aiAnalysisResponse);
+        return DeviceSummaryResponse.of(deviceStateResponse, allUnresolvedDeviceEvents);
     }
 }

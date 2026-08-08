@@ -120,11 +120,10 @@ export function DaisyChatMarkdown(props: DaisyChatMarkdownProps) {
     ul: ({ children }) => (
       <ul
         style={{
-          margin: 0,
+          margin: "4px 0 0",
           paddingLeft: 20,
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
+          listStyleType: "disc",
+          listStylePosition: "outside",
           ...bodyFont,
           fontSize: coerceFontSize(bodyFont?.fontSize, 13),
           color: textPrimary,
@@ -136,11 +135,10 @@ export function DaisyChatMarkdown(props: DaisyChatMarkdownProps) {
     ol: ({ children }) => (
       <ol
         style={{
-          margin: 0,
+          margin: "4px 0 0",
           paddingLeft: 20,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
+          listStyleType: "decimal",
+          listStylePosition: "outside",
           ...bodyFont,
           fontSize: coerceFontSize(bodyFont?.fontSize, 13),
           color: textPrimary,
@@ -157,6 +155,7 @@ export function DaisyChatMarkdown(props: DaisyChatMarkdownProps) {
         <li
           style={{
             lineHeight: 1.55,
+            marginBottom: 6,
             paddingLeft: 2,
           }}
         >

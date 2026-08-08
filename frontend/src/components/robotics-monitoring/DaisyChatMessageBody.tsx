@@ -3,6 +3,7 @@ import type { RoboticsDashboardFont } from "./roboticsMonitoringDashboardTypes"
 import {
   parseDaisyInline,
   severityColor,
+  shouldUseDaisyEventReportCards,
   tryParseDaisyEventReport,
   type DaisyContentBlock,
   type DaisyEventCard,
@@ -293,17 +294,18 @@ function DaisyBlockView(props: {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {block.intro ? (
-          <p
-            style={{
-              margin: 0,
-              ...bodyFont,
-              fontSize: coerceFontSize(bodyFont?.fontSize, 13),
-              lineHeight: 1.55,
-              color: textPrimary,
-            }}
-          >
-            {block.intro}
-          </p>
+          <DaisyChatMarkdown
+            text={block.intro}
+            bodyFont={bodyFont}
+            monoFont={monoFont}
+            textPrimary={textPrimary}
+            textSecondary={textSecondary}
+            borderColor={borderColor}
+            cardBackground={cardBackground}
+            statusError={statusError}
+            statusWarning={statusWarning}
+            accent={accent}
+          />
         ) : null}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {block.cards.map((card) => (
@@ -323,17 +325,18 @@ function DaisyBlockView(props: {
           ))}
         </div>
         {block.outro ? (
-          <p
-            style={{
-              margin: 0,
-              ...bodyFont,
-              fontSize: coerceFontSize(bodyFont?.fontSize, 12),
-              lineHeight: 1.5,
-              color: textSecondary,
-            }}
-          >
-            {block.outro}
-          </p>
+          <DaisyChatMarkdown
+            text={block.outro}
+            bodyFont={bodyFont}
+            monoFont={monoFont}
+            textPrimary={textSecondary}
+            textSecondary={textSecondary}
+            borderColor={borderColor}
+            cardBackground={cardBackground}
+            statusError={statusError}
+            statusWarning={statusWarning}
+            accent={accent}
+          />
         ) : null}
       </div>
     )
@@ -476,7 +479,8 @@ export function DaisyChatMessageBody(props: DaisyChatMessageBodyProps) {
     )
   }
 
-  const eventReport = tryParseDaisyEventReport(text)
+  const useEventReportCards = shouldUseDaisyEventReportCards(text)
+  const eventReport = useEventReportCards ? tryParseDaisyEventReport(text) : null
   if (eventReport && eventReport.type === "eventReport") {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

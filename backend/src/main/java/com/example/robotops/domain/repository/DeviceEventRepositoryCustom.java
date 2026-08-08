@@ -5,6 +5,7 @@ import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.response.DeviceEventResponse;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 public interface DeviceEventRepositoryCustom {
 
@@ -15,4 +16,10 @@ public interface DeviceEventRepositoryCustom {
     List<DeviceEvent> findAllUnresolvedDeviceEvents(String deviceId);
 
     List<DeviceEvent> findAllDeviceEvents(String deviceId);
+
+    boolean existsOpenCritical(String deviceId);
+
+    Optional<OffsetDateTime> findLatestOpenEventAt(String deviceId);
+
+    List<DeviceEventResponse> findTodayEvents(OffsetDateTime from, OffsetDateTime to);
 }

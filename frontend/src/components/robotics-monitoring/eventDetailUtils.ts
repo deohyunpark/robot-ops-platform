@@ -48,6 +48,7 @@ export type EventDetailAckState = {
   acknowledgedAt: string
   resolved: boolean
   resolvedAt: string
+  resolutionDescription: string
 }
 
 export function outageEventRowKey(row: DeviceEventFeedRow): string {
@@ -205,6 +206,7 @@ export function defaultAckState(): EventDetailAckState {
     acknowledgedAt: "",
     resolved: false,
     resolvedAt: "",
+    resolutionDescription: "",
   }
 }
 

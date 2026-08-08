@@ -24,4 +24,5 @@ public class AiAnalysisService {
     public List<AiAnalysisResponse> getRecentAiAnalysis() {
         return aiAnalysisRepository.findRecentAiAnalysis();
     }
+
 }

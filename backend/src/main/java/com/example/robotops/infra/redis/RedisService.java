@@ -150,7 +150,7 @@ public class RedisService {
 
         // 이벤트 리스트 저장
         String allDeviceKey = RedisKey.ALL_DEVICE_EVENT.key();
-        String allDeviceValue = event.getDeviceId() + ":" + event.getEventType().name();
+        String allDeviceValue = event.getDeviceId() + ":" + event.getEventType().name() + ":" + event.getSeverity().name();
 
         stringRedisTemplate.opsForZSet().add(allDeviceKey, allDeviceValue, OffsetDateTime.now().toInstant().toEpochMilli());
 

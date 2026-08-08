@@ -43,7 +43,7 @@ export type EventDetailModalProps = {
   monoFont: RoboticsDashboardFont
   onClose: () => void
   onAck: (assignee: string) => void
-  onResolve: () => void
+  onResolve: (description: string) => void
   onViewDevice: () => void
 }
 
@@ -90,14 +90,16 @@ export function EventDetailModal(props: EventDetailModalProps) {
 
   const ko = language === "ko"
   const [assigneeInput, setAssigneeInput] = useState("")
+  const [resolutionInput, setResolutionInput] = useState("")
   const [durationTick, setDurationTick] = useState(0)
 
   useEffect(() => {
     if (!open) return
     setAssigneeInput(ack.assignee || "")
+    setResolutionInput(ack.resolutionDescription || "")
     const id = window.setInterval(() => setDurationTick((t) => t + 1), 30_000)
     return () => window.clearInterval(id)
-  }, [open, ack.assignee])
+  }, [open, ack.assignee, ack.resolutionDescription])
 
   const backendEvent = useMemo(() => {
     if (!event) return null
@@ -566,47 +568,117 @@ export function EventDetailModal(props: EventDetailModalProps) {
                     monoFont={monoFont}
                     textSecondary={textSecondary}
                   />
+                  {ack.resolved && ack.resolutionDescription.trim() ? (
+                    <div
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        background: withAlpha(statusOnline, 0.08),
+                        border: `1px solid ${withAlpha(statusOnline, 0.22)}`,
+                      }}
+                    >
+                      <div
+                        style={{
+                          ...monoFont,
+                          fontSize: 11,
+                          color: textSecondary,
+                          marginBottom: 6,
+                        }}
+                      >
+                        {ko ? "조치 내용" : "Resolution notes"}
+                      </div>
+                      <div
+                        style={{
+                          ...bodyFont,
+                          fontSize: 14,
+                          lineHeight: 1.5,
+                          color: textPrimary,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {ack.resolutionDescription}
+                      </div>
+                    </div>
+                  ) : null}
 
                   {!ack.resolved ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
-                      <input
-                        value={assigneeInput}
-                        onChange={(e) => setAssigneeInput(e.target.value)}
-                        placeholder={ko ? "담당자 이름 입력" : "Assignee name"}
-                        style={{
-                          border: `1px solid ${borderColor}`,
-                          background: withAlpha(background, 0.4),
-                          color: textPrimary,
-                          borderRadius: 10,
-                          padding: "10px 12px",
-                          outline: "none",
-                          ...bodyFont,
-                          fontSize: 14,
-                        }}
-                      />
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          disabled={!assigneeInput.trim()}
-                          onClick={() => onAck(assigneeInput.trim())}
-                          style={primaryBtnStyle(accent, textPrimary, monoFont, !assigneeInput.trim())}
-                        >
-                          {ack.acknowledged
-                            ? ko
-                              ? "담당자 변경"
-                              : "Update assignee"
-                            : ko
-                              ? "ACK 확인"
-                              : "Acknowledge"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={onResolve}
-                          style={primaryBtnStyle(statusOnline, textPrimary, monoFont, false)}
-                        >
-                          {ko ? "해결 완료" : "Mark resolved"}
-                        </button>
-                      </div>
+                      {!ack.acknowledged ? (
+                        <>
+                          <input
+                            value={assigneeInput}
+                            onChange={(e) => setAssigneeInput(e.target.value)}
+                            placeholder={ko ? "담당자 이름 입력" : "Assignee name"}
+                            style={{
+                              border: `1px solid ${borderColor}`,
+                              background: withAlpha(background, 0.4),
+                              color: textPrimary,
+                              borderRadius: 10,
+                              padding: "10px 12px",
+                              outline: "none",
+                              ...bodyFont,
+                              fontSize: 14,
+                            }}
+                          />
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              disabled={!assigneeInput.trim()}
+                              onClick={() => onAck(assigneeInput.trim())}
+                              style={primaryBtnStyle(
+                                accent,
+                                textPrimary,
+                                monoFont,
+                                !assigneeInput.trim()
+                              )}
+                            >
+                              {ko ? "ACK 확인" : "Acknowledge"}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <textarea
+                            value={resolutionInput}
+                            onChange={(e) => setResolutionInput(e.target.value)}
+                            placeholder={
+                              ko
+                                ? "조치 내용을 입력하세요 (필수)"
+                                : "Describe the action taken (required)"
+                            }
+                            rows={4}
+                            style={{
+                              border: `1px solid ${borderColor}`,
+                              background: withAlpha(background, 0.4),
+                              color: textPrimary,
+                              borderRadius: 10,
+                              padding: "10px 12px",
+                              outline: "none",
+                              resize: "vertical",
+                              minHeight: 96,
+                              ...bodyFont,
+                              fontSize: 14,
+                              lineHeight: 1.5,
+                            }}
+                          />
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              disabled={!resolutionInput.trim()}
+                              onClick={() => onResolve(resolutionInput.trim())}
+                              style={primaryBtnStyle(
+                                statusOnline,
+                                textPrimary,
+                                monoFont,
+                                !resolutionInput.trim()
+                              )}
+                            >
+                              {ko ? "해결 완료" : "Mark resolved"}
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ) : null}
                 </div>

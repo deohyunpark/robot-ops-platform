@@ -1,7 +1,10 @@
 package com.example.robotops.domain.response;
 
+import com.example.robotops.domain.entity.DeviceState;
 import java.time.OffsetDateTime;
+import lombok.Builder;
 
+@Builder
 public record DeviceStateResponse(
         String deviceId,
         String siteId,
@@ -25,4 +28,9 @@ public record DeviceStateResponse(
         String lastSeenAt,
         OffsetDateTime updatedAt
 ) {
+    public static DeviceStateResponse of(DeviceState deviceState) {
+        return DeviceStateResponse.builder()
+                .deviceId(deviceState.getId().deviceId())
+                .build();
+    }
 }

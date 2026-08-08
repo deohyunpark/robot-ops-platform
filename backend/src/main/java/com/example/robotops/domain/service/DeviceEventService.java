@@ -60,7 +60,7 @@ public class DeviceEventService {
                 .map(tuple -> {
 
                     String[] split =
-                            tuple.getValue().split(":", 2);
+                            tuple.getValue().split(":", 3);
 
                     OffsetDateTime createdAt =
                             Instant.ofEpochMilli(
@@ -71,6 +71,7 @@ public class DeviceEventService {
 
                     return RedisEventResponse.of(split[0],
                             split[1],
+                            split[2],
                             createdAt
 
                     );
@@ -83,5 +84,7 @@ public class DeviceEventService {
     }
 
 
-
+    public List<DeviceEventResponse> findTodayEvents(OffsetDateTime from, OffsetDateTime to) {
+        return deviceEventRepository.findTodayEvents(from, to);
+    }
 }

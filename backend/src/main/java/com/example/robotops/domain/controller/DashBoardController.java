@@ -1,13 +1,13 @@
 package com.example.robotops.domain.controller;
 
 
-import com.example.robotops.domain.repository.AiAnalysisRepository;
 import com.example.robotops.domain.response.AiAnalysisResponse;
 import com.example.robotops.domain.response.DeviceEventResponse;
 import com.example.robotops.domain.response.DeviceIdResponse;
 import com.example.robotops.domain.response.RedisEventResponse;
 import com.example.robotops.domain.response.ThroughputResponse;
 import com.example.robotops.domain.response.UtilizationResponse;
+import com.example.robotops.domain.service.AiAnalysisService;
 import com.example.robotops.domain.service.DashBoardService;
 import com.example.robotops.domain.service.DeviceEventService;
 import com.example.robotops.domain.service.DeviceStateService;
@@ -26,7 +26,7 @@ public class DashBoardController {
     private final DashBoardService dashBoardService;
     private final DeviceEventService deviceEventService;
     private final DeviceStateService deviceStateService;
-    private final AiAnalysisRepository aiAnalysisRepository;
+    private final AiAnalysisService aiAnalysisService;
 
     @GetMapping("/utilization")
     public List<UtilizationResponse> getUtilization() {
@@ -48,18 +48,19 @@ public class DashBoardController {
 
     @GetMapping("/device-list")
     public List<DeviceIdResponse> getAllDevices() {
-        return deviceStateService.getAllDeviceList();
+        return deviceStateService.getAllDeviceIdList();
     }
 
     @GetMapping("/feed")
     public List<AiAnalysisResponse> getRecentAiAnalysis() {
-        return aiAnalysisRepository.findRecentAiAnalysis();
+        return aiAnalysisService.getRecentAiAnalysis();
     }
 
     @GetMapping("/events/{robotId}")
     public List<DeviceEventResponse> getDeviceEventsByRobotId(@PathVariable String robotId) {
         return deviceEventService.getDeviceEventsByRobotId(robotId);
     }
+
 
 //    @GetMapping("/openai")
 //    public AiSummaryResponse test() {

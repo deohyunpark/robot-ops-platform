@@ -83,7 +83,13 @@ public enum ErrorCode {
             "INSIGHT_001",
             "저장된 피드를 찾을 수 없습니다.",
             false
-    );
+    ),
+
+    PDF_GENERATION_FAILED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "PDF_GENERATE_001",
+            "PDF 발행에 실패했습니다.",
+            false);
 
     private final HttpStatus status;
     private final String code;

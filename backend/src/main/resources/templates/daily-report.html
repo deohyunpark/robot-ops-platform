@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8"/>
+    <title>RobotOps Daily Report</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 16mm 20mm 16mm;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            color: #1b2a33;
+            font-family: "Noto Sans KR", sans-serif;
+            font-size: 11px;
+            line-height: 1.55;
+            background: #ffffff;
+        }
+
+        .page {
+            width: 100%;
+        }
+
+        .header {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 18px;
+        }
+
+        .header td {
+            vertical-align: top;
+            padding: 0;
+            border: none;
+        }
+
+        .brand-block {
+            background: #0f1e27;
+            color: #e8f1f6;
+            border-radius: 12px;
+            padding: 18px 20px;
+        }
+
+        .brand-title {
+            margin: 0 0 4px 0;
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .brand-subtitle {
+            margin: 0;
+            font-size: 12px;
+            color: #8fa6b2;
+        }
+
+        .meta-block {
+            text-align: right;
+            padding-top: 6px;
+            color: #5e7482;
+            font-size: 10px;
+        }
+
+        .meta-block strong {
+            display: block;
+            color: #1b2a33;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .section {
+            margin-top: 18px;
+            page-break-inside: avoid;
+        }
+
+        .section-title {
+            margin: 0 0 10px 0;
+            padding-bottom: 6px;
+            border-bottom: 2px solid #2ed3b7;
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f1e27;
+        }
+
+        .section-desc {
+            margin: -4px 0 10px 0;
+            color: #5e7482;
+            font-size: 10px;
+        }
+
+        .kpi-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 8px 0;
+            margin: 0 -8px;
+        }
+
+        .kpi-table td {
+            width: 20%;
+            border: 1px solid #d7e3ea;
+            border-radius: 10px;
+            background: #f7fafb;
+            padding: 12px 10px;
+            text-align: center;
+            vertical-align: top;
+        }
+
+        .kpi-label {
+            display: block;
+            font-size: 10px;
+            color: #5e7482;
+            margin-bottom: 6px;
+        }
+
+        .kpi-value {
+            display: block;
+            font-size: 22px;
+            font-weight: 700;
+            line-height: 1.1;
+            color: #0f1e27;
+        }
+
+        .kpi-value.accent {
+            color: #159a86;
+        }
+
+        .kpi-value.warning {
+            color: #c98700;
+        }
+
+        .kpi-value.critical {
+            color: #d93658;
+        }
+
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .metrics-table td {
+            width: 25%;
+            border: 1px solid #d7e3ea;
+            background: #ffffff;
+            padding: 12px;
+            vertical-align: top;
+        }
+
+        .metric-label {
+            font-size: 10px;
+            color: #5e7482;
+            margin-bottom: 4px;
+        }
+
+        .metric-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #0f1e27;
+        }
+
+        .metric-note {
+            margin-top: 4px;
+            font-size: 9px;
+            color: #8fa6b2;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 4px;
+        }
+
+        .data-table th {
+            background: #0f1e27;
+            color: #e8f1f6;
+            font-size: 10px;
+            font-weight: 600;
+            text-align: left;
+            padding: 8px 10px;
+            border: 1px solid #0f1e27;
+        }
+
+        .data-table td {
+            border: 1px solid #d7e3ea;
+            padding: 8px 10px;
+            vertical-align: top;
+            font-size: 10px;
+            word-break: break-word;
+        }
+
+        .data-table tr:nth-child(even) td {
+            background: #f7fafb;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 9px;
+            font-weight: 700;
+            line-height: 1.4;
+        }
+
+        .badge-critical {
+            background: #ffe5eb;
+            color: #b42345;
+            border: 1px solid #ffb3c4;
+        }
+
+        .badge-warning {
+            background: #fff3dd;
+            color: #9a6700;
+            border: 1px solid #ffd48a;
+        }
+
+        .badge-info {
+            background: #e6fbf7;
+            color: #117a6a;
+            border: 1px solid #9de9dc;
+        }
+
+        .badge-neutral {
+            background: #eef3f6;
+            color: #496070;
+            border: 1px solid #d7e3ea;
+        }
+
+        .mono {
+            font-family: "Courier New", monospace;
+            font-size: 9px;
+            color: #334955;
+        }
+
+        .empty-box {
+            border: 1px dashed #c5d4dd;
+            border-radius: 10px;
+            background: #f7fafb;
+            color: #5e7482;
+            padding: 14px 12px;
+            text-align: center;
+            font-size: 10px;
+        }
+
+        .analysis-card {
+            border: 1px solid #d7e3ea;
+            border-left: 4px solid #2ed3b7;
+            border-radius: 10px;
+            background: #ffffff;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            page-break-inside: avoid;
+        }
+
+        .analysis-head {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 8px;
+        }
+
+        .analysis-head td {
+            border: none;
+            padding: 0;
+            vertical-align: middle;
+        }
+
+        .analysis-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #0f1e27;
+        }
+
+        .analysis-meta {
+            text-align: right;
+            font-size: 9px;
+            color: #8fa6b2;
+        }
+
+        .analysis-block {
+            margin-top: 6px;
+        }
+
+        .analysis-label {
+            font-size: 9px;
+            font-weight: 700;
+            color: #5e7482;
+            margin-bottom: 2px;
+        }
+
+        .analysis-text {
+            font-size: 10px;
+            color: #1b2a33;
+        }
+
+        .summary-box {
+            border: 1px solid #d7e3ea;
+            border-radius: 12px;
+            background: #f7fafb;
+            padding: 16px 18px;
+        }
+
+        .summary-content h1,
+        .summary-content h2,
+        .summary-content h3 {
+            margin: 10px 0 6px 0;
+            color: #0f1e27;
+            font-weight: 700;
+        }
+
+        .summary-content h1 {
+            font-size: 14px;
+        }
+
+        .summary-content h2 {
+            font-size: 13px;
+        }
+
+        .summary-content h3 {
+            font-size: 12px;
+            border-bottom: 1px solid #d7e3ea;
+            padding-bottom: 4px;
+        }
+
+        .summary-content p {
+            margin: 0 0 8px 0;
+            font-size: 10.5px;
+            line-height: 1.65;
+            color: #1b2a33;
+        }
+
+        .summary-content p.bullet,
+        .summary-content p.numbered {
+            padding-left: 4px;
+        }
+
+        .summary-content strong {
+            font-weight: 700;
+            color: #0f1e27;
+        }
+
+        .summary-empty {
+            margin: 0;
+            font-size: 10.5px;
+            line-height: 1.65;
+            color: #5e7482;
+        }
+
+        .footer {
+            margin-top: 22px;
+            padding-top: 10px;
+            border-top: 1px solid #d7e3ea;
+            text-align: center;
+            color: #8fa6b2;
+            font-size: 9px;
+        }
+
+        .yes-flag {
+            color: #d93658;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+
+    <table class="header">
+        <tr>
+            <td style="width: 68%;">
+                <div class="brand-block">
+                    <h1 class="brand-title">RobotOps Daily Report</h1>
+                    <p class="brand-subtitle">로봇 운영 관제 일일 운영 보고서</p>
+                </div>
+            </td>
+            <td style="width: 32%;">
+                <div class="meta-block">
+                    <strong th:text="${reportDateLabel}">2026-05-21</strong>
+                    <div>집계 구간</div>
+                    <div>
+                        <span th:text="${formattedFrom}">2026-05-21 00:00</span>
+                        ~
+                        <span th:text="${formattedTo}">2026-05-21 18:00</span>
+                    </div>
+                    <div style="margin-top: 8px;">생성 시각 <span th:text="${generatedAt}">2026-05-21 18:00</span></div>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <div class="section">
+        <h2 class="section-title">운영 현황 요약</h2>
+        <p class="section-desc">등록 장비 기준 온라인/오프라인 및 미해결 이벤트 심각도 현황</p>
+        <table class="kpi-table">
+            <tr>
+                <td>
+                    <span class="kpi-label">총 장비</span>
+                    <span class="kpi-value accent" th:text="${report.overview.totalDevices}">0</span>
+                </td>
+                <td>
+                    <span class="kpi-label">온라인</span>
+                    <span class="kpi-value accent" th:text="${report.overview.online}">0</span>
+                </td>
+                <td>
+                    <span class="kpi-label">오프라인</span>
+                    <span class="kpi-value" th:text="${report.overview.offline}">0</span>
+                </td>
+                <td>
+                    <span class="kpi-label">WARNING</span>
+                    <span class="kpi-value warning" th:text="${report.overview.warning}">0</span>
+                </td>
+                <td>
+                    <span class="kpi-label">CRITICAL</span>
+                    <span class="kpi-value critical" th:text="${report.overview.critical}">0</span>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">생산성 · 가동률</h2>
+        <p class="section-desc">금일 생산량 및 장비 가동률 지표</p>
+        <table class="metrics-table">
+            <tr>
+                <td>
+                    <div class="metric-label">오늘 총 생산량</div>
+                    <div class="metric-value"
+                         th:text="${report.statistics != null and report.statistics.throughputResponse != null ? report.statistics.throughputResponse.todayCount : 0}">
+                        0
+                    </div>
+                </td>
+                <td>
+                    <div class="metric-label">시간당 생산률</div>
+                    <div class="metric-value"
+                         th:text="${report.statistics != null and report.statistics.throughputResponse != null ? report.statistics.throughputResponse.hourlyRate : 0}">
+                        0
+                    </div>
+                </td>
+                <td>
+                    <div class="metric-label">최근 15분 생산량</div>
+                    <div class="metric-value"
+                         th:text="${report.statistics != null and report.statistics.throughputResponse != null ? report.statistics.throughputResponse.current15MinCount : 0}">
+                        0
+                    </div>
+                    <div class="metric-note"
+                         th:if="${report.statistics != null and report.statistics.throughputResponse != null}">
+                        전 15분 대비
+                        <span th:text="${report.statistics.throughputResponse.changeRate}">0</span>%
+                    </div>
+                </td>
+                <td>
+                    <div class="metric-label">평균 가동률</div>
+                    <div class="metric-value">
+                        <span th:text="${avgUtilizationPercent}">0</span>%
+                    </div>
+                    <div class="metric-note">활성 시간 / 전체 시간 기준</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section" th:if="${!#lists.isEmpty(utilizationRows)}">
+        <h2 class="section-title">장비별 가동률 Top 10</h2>
+        <table class="data-table">
+            <thead>
+            <tr>
+                <th style="width: 24%;">장비 ID</th>
+                <th style="width: 16%;">가동률</th>
+                <th style="width: 30%;">활성 시간(초)</th>
+                <th style="width: 30%;">전체 시간(초)</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="row : ${utilizationRows}">
+                <td th:text="${row.deviceId}">RBT-0001</td>
+                <td><strong th:text="${row.utilizationPercent + '%'}">0%</strong></td>
+                <td th:text="${row.activeSeconds}">0</td>
+                <td th:text="${row.totalSeconds}">0</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">금일 이벤트</h2>
+        <p class="section-desc">CRITICAL 우선 정렬 · 최대 25건</p>
+        <div class="empty-box" th:if="${#lists.isEmpty(displayEvents)}">
+            금일 수집된 이벤트가 없습니다.
+        </div>
+        <table class="data-table" th:if="${!#lists.isEmpty(displayEvents)}">
+            <thead>
+            <tr>
+                <th style="width: 16%;">장비</th>
+                <th style="width: 18%;">이벤트</th>
+                <th style="width: 12%;">심각도</th>
+                <th style="width: 18%;">발생 시각</th>
+                <th style="width: 36%;">상세</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="event : ${displayEvents}">
+                <td th:text="${event.deviceId}">RBT-0001</td>
+                <td th:text="${event.eventType}">OFFLINE</td>
+                <td>
+                    <span class="badge badge-critical"
+                          th:if="${event.severity != null and event.severity.name() == 'CRITICAL'}"
+                          th:text="${event.severity}">CRITICAL</span>
+                    <span class="badge badge-warning"
+                          th:if="${event.severity != null and event.severity.name() == 'WARNING'}"
+                          th:text="${event.severity}">WARNING</span>
+                    <span class="badge badge-info"
+                          th:if="${event.severity != null and event.severity.name() != 'CRITICAL' and event.severity.name() != 'WARNING'}"
+                          th:text="${event.severity}">INFO</span>
+                </td>
+                <td th:text="${event.createdAt != null ? #temporals.format(event.createdAt, 'yyyy-MM-dd HH:mm') : '-'}">
+                    2026-05-21 09:00
+                </td>
+                <td class="mono" th:text="${event.payload}">payload</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">위험 장비</h2>
+        <p class="section-desc">리스크 점수 기준 우선순위 장비</p>
+        <div class="empty-box" th:if="${#lists.isEmpty(displayPriorityDevices)}">
+            현재 우선 점검이 필요한 위험 장비가 없습니다.
+        </div>
+        <table class="data-table" th:if="${!#lists.isEmpty(displayPriorityDevices)}">
+            <thead>
+            <tr>
+                <th style="width: 20%;">장비 ID</th>
+                <th style="width: 14%;">리스크 점수</th>
+                <th style="width: 14%;">리스크 등급</th>
+                <th style="width: 18%;">미해결 CRITICAL</th>
+                <th style="width: 34%;">최근 이벤트 시각</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="device : ${displayPriorityDevices}">
+                <td th:text="${device.deviceId}">RBT-0001</td>
+                <td><strong th:text="${device.riskScore}">0</strong></td>
+                <td>
+                    <span class="badge badge-neutral" th:text="${device.riskLevel}">HIGH</span>
+                </td>
+                <td>
+                    <span th:if="${device.hasOpenCritical}" class="yes-flag">Y</span>
+                    <span th:if="${!device.hasOpenCritical}">N</span>
+                </td>
+                <td th:text="${device.latestEventAt != null ? #temporals.format(device.latestEventAt, 'yyyy-MM-dd HH:mm') : '-'}">
+                    2026-05-21 09:00
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section" th:if="${report.aiAnalyses != null and !#lists.isEmpty(report.aiAnalyses)}">
+        <h2 class="section-title">AI 인사이트</h2>
+        <p class="section-desc">최근 AI 분석 결과</p>
+        <div class="analysis-card" th:each="analysis : ${report.aiAnalyses}">
+            <table class="analysis-head">
+                <tr>
+                    <td>
+                        <div class="analysis-title" th:text="${analysis.robotId}">RBT-0001</div>
+                    </td>
+                    <td class="analysis-meta">
+                        <span class="badge badge-neutral" th:text="${analysis.riskLevel}">HIGH</span>
+                        · 점수 <span th:text="${analysis.riskScore}">0</span>
+                        ·
+                        <span th:text="${analysis.createdAt != null ? #temporals.format(analysis.createdAt, 'yyyy-MM-dd HH:mm') : '-'}">
+                            2026-05-21 09:00
+                        </span>
+                    </td>
+                </tr>
+            </table>
+            <div class="analysis-block">
+                <div class="analysis-label">현재 상황</div>
+                <div class="analysis-text" th:text="${analysis.currentSituation}">-</div>
+            </div>
+            <div class="analysis-block">
+                <div class="analysis-label">가능 원인</div>
+                <div class="analysis-text" th:text="${analysis.possibleCause}">-</div>
+            </div>
+            <div class="analysis-block">
+                <div class="analysis-label">권장 조치</div>
+                <div class="analysis-text" th:text="${analysis.recommendation}">-</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">AI 운영 요약</h2>
+        <p class="section-desc">Daisy AI가 금일 운영 데이터를 바탕으로 작성한 종합 보고</p>
+        <div class="summary-box">
+            <div th:if="${!#strings.isEmpty(aiSummaryHtml)}" th:utext="${aiSummaryHtml}"></div>
+            <p class="summary-empty" th:if="${#strings.isEmpty(aiSummaryHtml)}">
+                AI 요약을 생성하지 못했습니다.
+            </p>
+        </div>
+    </div>
+
+    <div class="footer">
+        RobotOps Platform · Daily Operations Report · Confidential Internal Use
+    </div>
+</div>
+</body>
+</html>

@@ -162,11 +162,12 @@ function formatPayloadBrace(raw: string): string {
 }
 
 function looksLikeEventReport(text: string): boolean {
-  return (
-    /\d+\.\s+\*\*RBT-/i.test(text) ||
-    /\*\*이벤트 타입:\*\*/.test(text) ||
-    /\*\*심각도:\*\*/.test(text)
-  )
+  return /\d+\.\s+\*\*RBT-/i.test(text)
+}
+
+/** `###` 요약 등 — 전체 마크다운 렌더링 우선 */
+export function hasDaisyMarkdownStructure(text: string): boolean {
+  return MARKDOWN_SUMMARY_HINT.test(text)
 }
 
 function splitEventReport(text: string): {
@@ -297,20 +298,68 @@ export function tryParseDaisyEventReport(text: string): DaisyContentBlock | null
   return parseDaisyEventReport(text)
 }
 
-/** Daisy LLM 한 줄 텍스트 → 마크다운 줄바꿈 */
-export function prepareDaisyMarkdown(raw: string): string {
-  let text = raw.trim()
-  if (!text) return ""
+function compactOrderedListBreaks(text: string): string {
+  return text.replace(/\n+(?=\d+\.\s)/g, "\n")
+}
 
-  if (text.includes("\\n") || text.includes("\\t")) {
-    text = text.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"')
+/** `-` bullet을 직전 ordered 항목 아래 중첩 목록으로 들여쓰기 (GFM) */
+function indentNestedListBullets(text: string): string {
+  const lines = text.split("\n")
+  const out: string[] = []
+  let inOrderedSubBullets = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      out.push("")
+      inOrderedSubBullets = false
+      continue
+    }
+
+    if (/^#{1,6}\s/.test(trimmed)) {
+      inOrderedSubBullets = false
+      out.push(line)
+      continue
+    }
+
+    if (/^\d+\.\s/.test(trimmed)) {
+      inOrderedSubBullets = true
+      out.push(line)
+      continue
+    }
+
+    if (/^-\s/.test(trimmed) && inOrderedSubBullets) {
+      out.push(`   ${trimmed}`)
+      continue
+    }
+
+    if (/^-\s/.test(trimmed)) {
+      inOrderedSubBullets = false
+      out.push(line)
+      continue
+    }
+
+    if (/^\(.+\)$/.test(trimmed) && inOrderedSubBullets) {
+      out.push(`   ${trimmed}`)
+      continue
+    }
+
+    inOrderedSubBullets = false
+    out.push(line)
   }
 
-  text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+  return out.join("\n")
+}
 
-  return text
+/** Daisy LLM 한 줄 텍스트 → react-markdown용 GFM */
+export function prepareDaisyMarkdown(raw: string): string {
+  let text = normalizeDaisyAnswer(raw)
+  if (!text) return ""
+
+  text = text
     .replace(/:\s+(#{1,6}\s)/g, ":\n\n$1")
     .replace(/([.!?])\s+(#{1,6}\s)/g, "$1\n\n$2")
+    .replace(/\s+(#{1,6}\s)/g, "\n\n$1")
     .replace(/(#{1,6}\s[^\n]+?)\s+(?=\d+\.\s+)/g, "$1\n\n")
     .replace(/(#{1,6}\s[^\n]+?)\s+-\s+/g, "$1\n")
     .replace(/(#{1,6}\s[^\n]+?)\s+\*\s+/g, "$1\n* ")
@@ -318,15 +367,24 @@ export function prepareDaisyMarkdown(raw: string): string {
     .replace(/\n(\*\*RBT-)/g, "\n- $1")
     .replace(/\s+-\s+(?=\*\*RBT-)/g, "\n- ")
     .replace(/\s+-\s+(?=\()/g, "\n- ")
-    .replace(/(\))\s+(?=\d+\.\s+)/g, "$1\n\n")
+    .replace(/(\))\s+(?=\d+\.\s+)/g, "$1\n")
     .replace(/(\))\s+(#{1,6}\s)/g, "$1\n\n$2")
     .replace(/(#{1,6}\s[^\n]+)\n([^-\n#\d*][^\n]*)/g, (_, header, body) => {
       return `${header}\n${body.replace(/\s+-\s+/g, "\n- ")}`
     })
     .replace(/(###[^\n]+\n)([가-힣A-Za-z][^:\n]*:\s*[^-\n]+)/g, "$1- $2")
     .replace(/(건)\s+(이상입니다)/g, "$1\n\n$2")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
+
+  text = compactOrderedListBreaks(text)
+  text = indentNestedListBullets(text)
+
+  return text.replace(/\n{3,}/g, "\n\n").trim()
+}
+
+export function shouldUseDaisyEventReportCards(text: string): boolean {
+  if (hasDaisyMarkdownStructure(text)) return false
+  const report = tryParseDaisyEventReport(text)
+  return report?.type === "eventReport" && report.cards.length > 0
 }
 
 export function parseDaisyMarkdown(text: string): MarkdownNode[] {

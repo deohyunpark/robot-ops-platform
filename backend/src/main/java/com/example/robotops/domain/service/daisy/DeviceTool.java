@@ -1,5 +1,6 @@
 package com.example.robotops.domain.service.daisy;
 
+import com.example.robotops.domain.repository.DeviceEventRepository;
 import com.example.robotops.domain.repository.DeviceSummaryRepositoryCustom;
 import com.example.robotops.domain.response.DeviceStateResponse;
 import com.example.robotops.domain.response.DeviceSummaryResponse;
@@ -7,16 +8,19 @@ import com.example.robotops.error.ErrorCode;
 import com.example.robotops.error.RobotOpsException;
 import com.example.robotops.infra.redis.RedisService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class DeviceTool {
 
     private final RedisService redisService;
     private final DeviceSummaryRepositoryCustom deviceSummaryRepository;
+    private final DeviceEventRepository deviceEventRepository;
     /**
      *  현재 온라인인 장비는 몇 대인가요?
      * 오프라인 장비만 보여주세요.
@@ -104,9 +108,23 @@ public class DeviceTool {
             @ToolParam(description = "조회할 로봇 ID")
             String deviceId
     ) {
-        return redisService.getState(deviceId).orElseThrow(
+
+        log.info(
+                "[DAISY TOOL] getDeviceState called. deviceId={}",
+                deviceId
+        );
+
+        DeviceStateResponse result = redisService.getState(deviceId).orElseThrow(
                 () -> new RobotOpsException(ErrorCode.DEVICE_NOT_FOUND)
         );
+
+        log.info(
+                "[DAISY TOOL] getDeviceState result={}",
+                result
+        );
+
+        return result;
+
     }
 
     @Tool(description = """
@@ -129,6 +147,15 @@ public class DeviceTool {
         - 이 로봇이 왜 위험한가요?
         - 최근 장애와 AI 분석을 함께 보여주세요.
         - 지금 가장 주의해야 할 부분이 무엇인가요?
+        
+        장비 중지 여부를 질문받으면
+        현재 상태, 미해결 이벤트, 위험도를 조회한다.
+        
+        EMERGENCY_STOP, COLLISION 등 즉각적인 안전 위험이 존재하면
+        운영자에게 장비 정지 및 현장 확인을 권고할 수 있다.
+        
+        Tool 결과 없이 장비 중지를 임의로 권고하지 않는다.
+        실제 제어 명령을 실행하지 않는다.
 
         단순히 현재 배터리나 온도처럼 최신 상태 하나만 묻는 경우에는
         getDeviceState를 사용한다.
@@ -145,6 +172,20 @@ public class DeviceTool {
             String deviceId
     ) {
         // 조회
-        return deviceSummaryRepository.getDeviceSummary(deviceId);
+
+        log.info(
+                "[DAISY TOOL] getDeviceSummary called. deviceId={}",
+                deviceId
+        );
+
+        DeviceSummaryResponse result = deviceSummaryRepository.getDeviceSummary(deviceId);
+
+        log.info(
+                "[DAISY TOOL] getDeviceSummary result={}",
+                result
+        );
+
+        return result;
     }
+
 }

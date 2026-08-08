@@ -454,6 +454,11 @@ export function deviceEventsFeedFromPayload(input: unknown): DeviceEventFeedRow[
   return extractDeviceEventFeedList(input)
 }
 
+export function isDeviceEventsStompDestination(destination?: string): boolean {
+  const d = (destination ?? "").trim()
+  return d === "/robot/device/events" || d.endsWith("/robot/device/events")
+}
+
 /** GET/WS: TotalUtilizationResponse */
 export type BackendTotalUtilizationResponse = {
   totalUtilization: number

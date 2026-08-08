@@ -51,3 +51,8 @@ management:
   metrics:
     tags:
       application: robot-ops-backend
+
+logging:
+  level:
+    org.springframework.ai: DEBUG
+    org.springframework.ai.chat.client.advisor: DEBUG
