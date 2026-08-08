@@ -69,6 +69,20 @@ public enum ErrorCode {
             "MSG_002",
             "메시지 역직렬화에 실패했습니다.",
             false
+    ),
+
+    DEVICE_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "DEVICE_001",
+            "디바이스를 찾을 수 없습니다.",
+            false
+    ),
+
+    INSIGHT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "INSIGHT_001",
+            "저장된 피드를 찾을 수 없습니다.",
+            false
     );
 
     private final HttpStatus status;

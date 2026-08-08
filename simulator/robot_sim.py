@@ -3,11 +3,18 @@ import time
 import random
 import math
 import argparse
+import os
+
 from datetime import datetime, timezone, timedelta
+
 import paho.mqtt.client as mqtt
+import redis
 
 
 KST = timezone(timedelta(hours=9))
+
+DEMO_STATUS_KEY = "demo:simulation:status"
+DEMO_RUNNING = "RUNNING"
 
 
 def now_kst_iso():
@@ -87,11 +94,9 @@ def apply_issue(robot):
     speed = None
     cpu = None
 
-
     # 정상
     if issue == "NORMAL":
         pass
-
 
     # 배터리 부족
     elif issue == "LOW_BATTERY":
@@ -104,7 +109,6 @@ def apply_issue(robot):
         if robot["battery"] < 20:
             error_code = "LOW_BATTERY"
 
-
     # 과열
     elif issue == "OVERHEAT":
         robot["temp"] = clamp(
@@ -116,23 +120,19 @@ def apply_issue(robot):
         if robot["temp"] > 80:
             error_code = "OVERHEAT"
 
-
     # 장애물
     elif issue == "OBSTACLE":
         obstacle = True
         error_code = "OBSTACLE"
 
-
     # 충돌
     elif issue == "COLLISION":
         error_code = "COLLISION"
-
 
     # 비상정지
     elif issue == "EMERGENCY_STOP":
         estop = True
         error_code = "EMERGENCY_STOP"
-
 
     # CPU 상승
     elif issue == "CPU_RISING":
@@ -147,10 +147,8 @@ def apply_issue(robot):
 
         cpu = robot["cpu"]
 
-
     # 속도 상승
     elif issue == "SPEED_RISING":
-
         robot["speed"] = clamp(
             robot["speed"] + 0.2,
             0,
@@ -162,59 +160,16 @@ def apply_issue(robot):
 
         speed = robot["speed"]
 
-
     return obstacle, error_code, estop, speed, cpu
 
 
-
-def main():
-
-    ap = argparse.ArgumentParser()
-
-    ap.add_argument("--host", default="localhost")
-    ap.add_argument("--port", type=int, default=1883)
-    ap.add_argument("--site", default="SeoulLine1")
-    ap.add_argument("--robots", type=int, default=20)
-    ap.add_argument("--rate", type=float, default=1)
-    ap.add_argument("--qos", type=int, default=1)
-
-    args = ap.parse_args()
-
-
-    client = mqtt.Client(
-        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=f"robot-sim-{random.randint(1000,9999)}"
-    )
-
-
-    client.connect(
-        args.host,
-        args.port,
-        keepalive=60
-    )
-
-    client.loop_start()
-
-
-    issues = [
-        "NORMAL",
-        "LOW_BATTERY",
-        "OVERHEAT",
-        "OBSTACLE",
-        "COLLISION",
-        "EMERGENCY_STOP",
-        "CPU_RISING",
-        "SPEED_RISING",
-        "OFFLINE"
-    ]
-
+def create_robots(robot_count, issues):
 
     robots = []
 
+    for i in range(robot_count):
 
-    for i in range(args.robots):
-
-        rid = f"RBT-{i+1:04d}"
+        rid = f"RBT-{i + 1:04d}"
 
         issue = (
             issues[i]
@@ -222,15 +177,11 @@ def main():
             else "NORMAL"
         )
 
-
         robots.append({
-
             "id": rid,
-
             "issue": issue,
 
             "seq": 0,
-
             "online": True,
 
             "mission": random.choices(
@@ -244,10 +195,14 @@ def main():
                 weights=[5, 25, 25, 25, 20],
                 k=1
             )[0],
-            "offline_after": time.time() + random.randint(8, 15),
 
-            "x": random.uniform(0,30),
-            "y": random.uniform(0,20),
+            # 데모 시작 후 8~15초 뒤 OFFLINE
+            "offline_after": time.time()
+            + random.randint(8, 15),
+
+            "x": random.uniform(0, 30),
+            "y": random.uniform(0, 20),
+
             "theta": random.uniform(
                 -math.pi,
                 math.pi
@@ -279,85 +234,203 @@ def main():
             )
         })
 
+    return robots
 
-    interval = 1 / max(args.rate,0.1)
 
+def main():
 
-    print(
-        f"robots={args.robots}"
+    ap = argparse.ArgumentParser()
+
+    ap.add_argument("--host", default="localhost")
+    ap.add_argument("--port", type=int, default=1883)
+    ap.add_argument("--site", default="SeoulLine1")
+    ap.add_argument("--robots", type=int, default=20)
+    ap.add_argument("--rate", type=float, default=1)
+    ap.add_argument("--qos", type=int, default=1)
+
+    args = ap.parse_args()
+
+    redis_client = redis.Redis(
+        host=os.getenv("REDIS_HOST", "redis"),
+        port=int(os.getenv("REDIS_PORT", "6379")),
+        decode_responses=True
     )
 
+    client = mqtt.Client(
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        client_id=f"robot-sim-{random.randint(1000, 9999)}"
+    )
+
+    client.connect(
+        args.host,
+        args.port,
+        keepalive=60
+    )
+
+    client.loop_start()
+
+    issues = [
+        "NORMAL",
+        "LOW_BATTERY",
+        "OVERHEAT",
+        "OBSTACLE",
+        "COLLISION",
+        "EMERGENCY_STOP",
+        "CPU_RISING",
+        "SPEED_RISING",
+        "OFFLINE"
+    ]
+
+    # 최초에는 한 번 생성해두되,
+    # 실제 데모 시작 시 다시 초기화함
+    robots = create_robots(
+        args.robots,
+        issues
+    )
+
+    interval = 1 / max(
+        args.rate,
+        0.1
+    )
+
+    print(
+        f"[SIMULATOR] robots={args.robots}, "
+        f"rate={args.rate}, "
+        f"site={args.site}"
+    )
+
+    previous_status = None
 
     try:
 
         while True:
 
-            start=time.time()
+            try:
+                status = redis_client.get(
+                    DEMO_STATUS_KEY
+                )
 
+            except redis.RedisError as exception:
+                print(
+                    "[REDIS] failed to read demo status:",
+                    exception
+                )
+                time.sleep(2)
+                continue
+
+            # STOPPED / None -> RUNNING 진입 순간
+            if (
+                status == DEMO_RUNNING
+                and previous_status != DEMO_RUNNING
+            ):
+
+                print(
+                    "[DEMO] simulation started"
+                )
+
+                robots = create_robots(
+                    args.robots,
+                    issues
+                )
+
+                print(
+                    "[DEMO] robot state initialized"
+                )
+
+            # RUNNING -> STOPPED / TTL 만료
+            if (
+                status != DEMO_RUNNING
+                and previous_status == DEMO_RUNNING
+            ):
+                print(
+                    "[DEMO] simulation stopped"
+                )
+
+            previous_status = status
+
+            # 데모 실행 중이 아니면 MQTT 발행 안 함
+            if status != DEMO_RUNNING:
+                time.sleep(1)
+                continue
+
+            start = time.time()
 
             for robot in robots:
 
-    # 5% 확률로 mission 변경
+                # 5% 확률로 mission 변경
                 if random.random() < 0.05:
-                    robot["mission"] = random.choices([
-                        "IDLE",
-                        "MOVE",
-                        "PICK",
-                        "PACK",
-                        "CHARGE",
-                        "DONE"
-                    ],
-                    weights=[1, 30, 30, 20, 10, 9],
-                    k=1
+                    robot["mission"] = random.choices(
+                        [
+                            "IDLE",
+                            "MOVE",
+                            "PICK",
+                            "PACK",
+                            "CHARGE",
+                            "DONE"
+                        ],
+                        weights=[
+                            1,
+                            30,
+                            30,
+                            20,
+                            10,
+                            9
+                        ],
+                        k=1
                     )[0]
+
                 # OFFLINE 테스트
+                #
+                # offline_after 시간이 지나면
+                # 더 이상 MQTT를 발행하지 않음
                 if (
                     robot["issue"] == "OFFLINE"
-                    and time.time() >= robot["offline_after"]
+                    and time.time()
+                    >= robot["offline_after"]
                 ):
                     robot["online"] = False
                     continue
 
                 robot["seq"] += 1
 
-
-
-
                 robot["theta"] += random.uniform(
                     -0.2,
                     0.2
                 )
 
-
                 robot["x"] = clamp(
                     robot["x"]
                     + math.cos(robot["theta"])
-                    * random.uniform(0,0.4),
+                    * random.uniform(0, 0.4),
                     0,
                     30
                 )
 
-
                 robot["y"] = clamp(
                     robot["y"]
                     + math.sin(robot["theta"])
-                    * random.uniform(0,0.4),
+                    * random.uniform(0, 0.4),
                     0,
                     20
                 )
 
-
-                # LOW_BATTERY 로봇 제외, 일반 로봇만 천천히 감소
+                # LOW_BATTERY 로봇 제외
+                # 일반 로봇은 배터리 천천히 감소
                 if robot["issue"] != "LOW_BATTERY":
                     robot["battery"] = clamp(
-                        robot["battery"] - random.uniform(0, 0.001),
+                        robot["battery"]
+                        - random.uniform(0, 0.001),
                         0,
                         100
                     )
 
-                obstacle, error, estop, speed, cpu = apply_issue(robot)
-
-
+                (
+                    obstacle,
+                    error,
+                    estop,
+                    speed,
+                    cpu
+                ) = apply_issue(robot)
 
                 payload = make_payload(
                     robot,
@@ -368,13 +441,11 @@ def main():
                     cpu
                 )
 
-
                 topic = (
                     f"factory/{args.site}"
                     f"/robot/{robot['id']}"
                     "/telemetry"
                 )
-
 
                 client.publish(
                     topic,
@@ -383,25 +454,31 @@ def main():
                     retain=False
                 )
 
-
-            elapsed=time.time()-start
+            elapsed = (
+                time.time()
+                - start
+            )
 
             time.sleep(
                 max(
                     0,
-                    interval-elapsed
+                    interval - elapsed
                 )
             )
 
-
     except KeyboardInterrupt:
-        pass
-
+        print(
+            "[SIMULATOR] interrupted"
+        )
 
     finally:
+
         client.loop_stop()
         client.disconnect()
 
+        print(
+            "[SIMULATOR] disconnected"
+        )
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ public class AiAnalysisInsight {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private long id;
+    private Long id;
 
     @Column(name = "score", nullable = false)
     private int score;

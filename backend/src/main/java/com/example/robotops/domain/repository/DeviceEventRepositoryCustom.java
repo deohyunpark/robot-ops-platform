@@ -11,4 +11,8 @@ public interface DeviceEventRepositoryCustom {
     void batchInsert(List<DeviceEvent> deviceEvents);
 
     List<DeviceEventResponse> findDeviceByRequest(String deviceId, EventType eventType, OffsetDateTime from, OffsetDateTime to);
+
+    List<DeviceEvent> findAllUnresolvedDeviceEvents(String deviceId);
+
+    List<DeviceEvent> findAllDeviceEvents(String deviceId);
 }

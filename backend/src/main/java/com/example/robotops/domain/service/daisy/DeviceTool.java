@@ -1,12 +1,22 @@
 package com.example.robotops.domain.service.daisy;
 
+import com.example.robotops.domain.repository.DeviceSummaryRepositoryCustom;
+import com.example.robotops.domain.response.DeviceStateResponse;
+import com.example.robotops.domain.response.DeviceSummaryResponse;
+import com.example.robotops.error.ErrorCode;
+import com.example.robotops.error.RobotOpsException;
+import com.example.robotops.infra.redis.RedisService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
 public class DeviceTool {
 
+    private final RedisService redisService;
+    private final DeviceSummaryRepositoryCustom deviceSummaryRepository;
     /**
      *  현재 온라인인 장비는 몇 대인가요?
      * 오프라인 장비만 보여주세요.
@@ -76,5 +86,65 @@ public class DeviceTool {
      * "운영자가 지금 가장 먼저 해야 할 일은 무엇인가요?"
     */
 
+    @Tool(description = """
+            현재 로봇(Device)의 최신 상태를 조회한다.
 
+            다음과 같은 질문에서 반드시 사용한다.
+            - Robot01 상태 알려줘
+            - 현재 배터리가 몇 퍼센트야?
+            - 현재 온도가 얼마야?
+            - 온라인인지 오프라인인지 알려줘
+            - 현재 어떤 작업을 수행 중이야?
+            - CPU, Memory 사용률을 알려줘
+
+            Redis에 저장된 최신 상태를 조회하며
+            절대로 추측해서 답변하지 않는다.
+            """)
+    public DeviceStateResponse getDeviceState(
+            @ToolParam(description = "조회할 로봇 ID")
+            String deviceId
+    ) {
+        return redisService.getState(deviceId).orElseThrow(
+                () -> new RobotOpsException(ErrorCode.DEVICE_NOT_FOUND)
+        );
+    }
+
+    @Tool(description = """
+        특정 로봇의 현재 운영 상태와 최근 위험 상황을 종합 조회한다.
+
+        다음 정보를 함께 반환한다.
+        - Redis에 저장된 최신 로봇 상태
+          (온라인 여부, 모드, 미션, 배터리, 온도, 속도, 위치,
+           CPU·메모리 사용률, 센서 상태, 마지막 수신 시각)
+        - PostgreSQL에 저장된 현재 이벤트 이력
+          (충돌, 비상정지, 장애물, 과열, 저전력, 오프라인 등)
+        - 해당 로봇의 가장 최근 AI 분석 결과
+          (현재 상황, 가능한 원인, 권장 조치)
+        - 탐지된 인사이트를 기반으로 계산된 최신 위험 점수와 위험 등급
+
+        다음과 같은 종합적인 질문에 사용한다.
+        - RBT-0001 현재 상태를 종합적으로 알려주세요.
+        - 이 로봇은 지금 안전한가요?
+        - RBT-0001에 문제가 있는지 확인해주세요.
+        - 이 로봇이 왜 위험한가요?
+        - 최근 장애와 AI 분석을 함께 보여주세요.
+        - 지금 가장 주의해야 할 부분이 무엇인가요?
+
+        단순히 현재 배터리나 온도처럼 최신 상태 하나만 묻는 경우에는
+        getDeviceState를 사용한다.
+
+        데이터가 존재하지 않는 항목은 추측하거나 생성하지 말고,
+        조회 결과가 없다고 명확하게 답변한다.
+        """)
+    public DeviceSummaryResponse getDeviceSummary(
+            @ToolParam(description = """
+                종합 상태를 조회할 로봇 ID.
+                예: RBT-0001
+                사용자의 질문에 로봇 ID가 없으면 임의로 생성하지 않는다.
+                """)
+            String deviceId
+    ) {
+        // 조회
+        return deviceSummaryRepository.getDeviceSummary(deviceId);
+    }
 }

@@ -17,6 +17,11 @@ export function KPI(props: {
   titleFont: RoboticsDashboardFont
   valueFont: RoboticsDashboardFont
   onClick?: () => void
+  /** 장애 등 — 활성 알림 점등 */
+  alertActive?: boolean
+  /** 신규 알림 — 깜빡임 */
+  alertBlink?: boolean
+  alertColor?: string
 }) {
   const {
     title,
@@ -30,7 +35,20 @@ export function KPI(props: {
     titleFont,
     valueFont,
     onClick,
+    alertActive = false,
+    alertBlink = false,
+    alertColor,
   } = props
+  const glowColor = alertColor ?? color
+  const isAlert = alertActive && !!alertColor
+  const accentBarColor = isAlert ? glowColor : color
+  const cardBorder = isAlert
+    ? withAlpha(glowColor, alertBlink ? 0.72 : 0.58)
+    : border
+  const cardBackground = isAlert ? withAlpha(glowColor, 0.1) : bg
+  const steadyGlow = isAlert
+    ? `0 0 0 1px ${withAlpha(glowColor, 0.32)}, 0 0 22px ${withAlpha(glowColor, 0.42)}`
+    : undefined
   return (
     <div
       role={onClick ? "button" : undefined}
@@ -50,13 +68,19 @@ export function KPI(props: {
         position: "relative",
         width: "100%",
         borderRadius: 14,
-        background: bg,
-        border: `1px solid ${border}`,
+        background: cardBackground,
+        border: `1px solid ${cardBorder}`,
         padding: 14,
         boxSizing: "border-box",
         overflow: "hidden",
         minHeight: 86,
         cursor: onClick ? "pointer" : "default",
+        boxShadow: isAlert && !alertBlink ? steadyGlow : undefined,
+        animation:
+          isAlert && alertBlink
+            ? "rm-kpi-outage-blink 0.85s ease-in-out infinite"
+            : undefined,
+        transition: "background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease",
       }}
     >
       <div
@@ -64,7 +88,7 @@ export function KPI(props: {
         style={{
           position: "absolute",
           inset: 0,
-          borderTop: `2px solid ${withAlpha(color, 0.55)}`,
+          borderTop: `2px solid ${withAlpha(accentBarColor, isAlert ? 0.88 : 0.55)}`,
           pointerEvents: "none",
         }}
       />
@@ -97,8 +121,9 @@ export function KPI(props: {
             fontSize: coerceFontSize(valueFont?.fontSize, 20),
             lineHeight: valueFont?.lineHeight ?? "1.05em",
             letterSpacing: valueFont?.letterSpacing ?? "-0.03em",
-            color: textPrimary,
+            color: isAlert ? glowColor : textPrimary,
             whiteSpace: "nowrap",
+            fontWeight: isAlert ? 700 : valueFont?.fontWeight,
           }}
         >
           {value}

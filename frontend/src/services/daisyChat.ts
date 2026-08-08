@@ -1,5 +1,5 @@
 /**
- * POST /api/daisy/chat
+ * POST /v1/daisy/chat
  */
 import { API_BASE_URL } from "./apiBaseUrl"
 import { normalizeDaisyAnswer } from "./daisyChatFormat"
@@ -73,7 +73,7 @@ export async function postDaisyChat(
     throw new DaisyChatError("client")
   }
 
-  const url = `${API_BASE_URL}/api/daisy/chat`
+  const url = `${API_BASE_URL}/v1/daisy/chat`
 
   let res: Response
   try {

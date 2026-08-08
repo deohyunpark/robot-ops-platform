@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react"
 import type { Device } from "./roboticsMonitoringDashboardTypes"
 import type { RoboticsDashboardFont } from "./roboticsMonitoringDashboardTypes"
-import { Badge } from "./DashboardParts"
 import { useMediaQuery } from "./useMediaQuery"
 import {
   coerceFontSize,
+  eventSeverityColor,
   formatBattery,
   formatKoreanRelativeTime,
   formatTemp,
@@ -29,6 +29,7 @@ export function useDeviceTableRenderer(args: {
   onSelect: (id: string) => void
   selectedId: string
   chatInsertActive?: boolean
+  outageDeviceIds?: ReadonlySet<string>
   ui: UiStrings
 }) {
   const {
@@ -41,6 +42,7 @@ export function useDeviceTableRenderer(args: {
     monoFont,
     chatInsertActive,
     onSelect,
+    outageDeviceIds,
     panelBackground,
     selectedId,
     statusError,
@@ -137,14 +139,13 @@ export function useDeviceTableRenderer(args: {
                 const missionColor = getMissionColor(statusText, accent)
                 const eventText = d.lastEventType?.trim() || "-"
                 const severity = (d.lastEventSeverity ?? "").toUpperCase()
-                const eventColor =
-                  severity === "CRITICAL" || severity === "ERROR"
-                    ? "#EF4444"
-                    : severity === "WARN" || severity === "WARNING"
-                      ? "#F59E0B"
-                      : severity === "INFO"
-                        ? "#3B82F6"
-                        : textSecondary
+                const eventColor = eventSeverityColor(d.lastEventSeverity, {
+                  error: statusError,
+                  warning: statusWarning,
+                  info: accent,
+                  secondary: textSecondary,
+                })
+                const isOutageDevice = outageDeviceIds?.has(d.id) ?? false
                 const batteryBad = d.battery <= lowBatteryThreshold
                 const tempBad = d.temperature >= abnormalTempThreshold
                 const eventBad = eventText !== "-"
@@ -153,10 +154,14 @@ export function useDeviceTableRenderer(args: {
 
                 const rowBg = isChatInsertHover
                   ? withAlpha(accent, 0.24)
-                  : isSelected
-                    ? withAlpha(accent, 0.1)
-                    : "transparent"
-                const rowHover = withAlpha(accent, chatInsertActive ? 0.14 : 0.06)
+                  : isOutageDevice
+                    ? withAlpha(statusError, isSelected ? 0.24 : 0.14)
+                    : isSelected
+                      ? withAlpha(accent, 0.1)
+                      : "transparent"
+                const rowHover = isOutageDevice
+                  ? withAlpha(statusError, 0.1)
+                  : withAlpha(accent, chatInsertActive ? 0.14 : 0.06)
 
                 return (
                   <button
@@ -183,7 +188,10 @@ export function useDeviceTableRenderer(args: {
                       gap: 12,
                       padding: "12px 14px",
                       border: "none",
-                      borderBottom: `1px solid ${borderColor}`,
+                      borderBottom: `1px solid ${isOutageDevice ? withAlpha(statusError, 0.28) : borderColor}`,
+                      borderLeft: isOutageDevice
+                        ? `3px solid ${statusError}`
+                        : undefined,
                       background: rowBg,
                       color: textPrimary,
                       textAlign: "left",
@@ -224,8 +232,12 @@ export function useDeviceTableRenderer(args: {
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           textAlign: "center",
-                          fontWeight: isChatInsertHover ? 700 : 400,
-                          color: isChatInsertHover ? accent : textPrimary,
+                          fontWeight: isChatInsertHover || isOutageDevice ? 700 : 400,
+                          color: isOutageDevice
+                            ? statusError
+                            : isChatInsertHover
+                              ? accent
+                              : textPrimary,
                         }}
                       >
                         {d.id}
@@ -347,13 +359,6 @@ export function useDeviceTableRenderer(args: {
                       >
                         {formatTemp(d.temperature)}
                       </span>
-                      {tempBad ? (
-                        <Badge
-                          label="Hot"
-                          color={statusError}
-                          font={monoFont}
-                        />
-                      ) : null}
                     </span>
 
                     <span
@@ -437,6 +442,7 @@ export function useDeviceTableRenderer(args: {
       chatInsertActive,
       chatInsertHoverId,
       lowBatteryThreshold,
+      outageDeviceIds,
       monoFont,
       onSelect,
       panelBackground,

@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/daisy")
+@RequestMapping("/v1/daisy")
 public class DaisyController {
 
     private final DaisyAssistantService das;
@@ -20,7 +20,7 @@ public class DaisyController {
     @PostMapping("/chat")
     public DaisyChatResponse chat(@RequestBody DaisyChatRequest request
     ) {
-        String answer = das.ask(request.request());
+        String answer = das.askEvent(request.request());
         System.out.println("answer: " + answer);
         return DaisyChatResponse.of(answer);
     }

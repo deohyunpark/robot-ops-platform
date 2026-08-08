@@ -3,6 +3,7 @@ package com.example.robotops.domain.repository;
 import static com.example.robotops.domain.entity.QDeviceEvent.deviceEvent;
 import static org.springframework.util.StringUtils.hasText;
 
+import com.example.robotops.domain.deviceStateType.EventStatus;
 import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.response.DeviceEventResponse;
@@ -75,6 +76,30 @@ public class DeviceEventRepositoryImpl implements DeviceEventRepositoryCustom {
 
     }
 
+    @Override
+    public List<DeviceEvent> findAllUnresolvedDeviceEvents(String deviceId) {
+        return queryFactory.selectFrom(deviceEvent)
+                .where(
+                        robotIdEq(deviceId),
+                        unresolved()
+                )
+                .orderBy(deviceEvent.createdAt.desc())
+                .limit(100)
+                .fetch();
+
+    }
+
+    @Override
+    public List<DeviceEvent> findAllDeviceEvents(String robotId) {
+        return queryFactory.selectFrom(deviceEvent)
+                .where(
+                        robotIdEq(robotId)
+                )
+                .orderBy(deviceEvent.createdAt.desc())
+                .limit(15)
+                .fetch();
+    }
+
     private BooleanExpression robotIdEq(String robotId) {
         return hasText(robotId)
                 ? deviceEvent.deviceId.eq(robotId)
@@ -98,4 +123,14 @@ public class DeviceEventRepositoryImpl implements DeviceEventRepositoryCustom {
                 ? deviceEvent.createdAt.lt(to)
                 : null;
     }
+
+    private BooleanExpression unresolved() {
+        return deviceEvent.eventStatus.in(
+                EventStatus.OPEN,
+                EventStatus.ACKNOWLEDGED
+        );
+    }
+
+
+
 }

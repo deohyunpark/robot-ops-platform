@@ -62,6 +62,8 @@ services:
   simulator:
     build: ../simulator
     container_name: simulator
+    profiles:
+      - demo
     environment:
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"

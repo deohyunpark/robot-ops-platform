@@ -164,6 +164,41 @@ export function eventBatchFromPayload(input: unknown): BackendDeviceEvent[] {
   return one ? [one] : []
 }
 
+/** GET /v1/dashboard/feed → List<AiAnalysisResponse> */
+export function insightFeedItemsFromApiResponse(input: unknown): InsightFeedItem[] {
+  if (!Array.isArray(input)) return []
+
+  const items: InsightFeedItem[] = []
+  for (const row of input) {
+    if (!row || typeof row !== "object") continue
+    const raw = row as Record<string, unknown>
+    const receivedAt =
+      (typeof raw.createdAt === "string" && raw.createdAt.trim()) ||
+      (typeof raw.created_at === "string" && raw.created_at.trim()) ||
+      new Date().toISOString()
+    const mapped = normalizeAiSummaryRecord(
+      {
+        robotId: raw.robotId ?? raw.robot_id,
+        currentSituation: raw.currentSituation ?? raw.current_situation,
+        possibleCause: raw.possibleCause ?? raw.possible_cause,
+        recommendation: raw.recommendation,
+        riskLevel: raw.riskLevel ?? raw.risk_level,
+        score: raw.riskScore ?? raw.risk_score,
+      },
+      receivedAt
+    )
+    if (!mapped) continue
+    items.push({
+      ...mapped,
+      id: `${mapped.robotId}|${receivedAt}`,
+      score: toNum(raw.riskScore ?? raw.risk_score, mapped.score),
+      receivedAt,
+    })
+  }
+
+  return items.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+}
+
 export function deviceEventFeedRowToBackendEvent(
   row: DeviceEventFeedRow
 ): BackendDeviceEvent {

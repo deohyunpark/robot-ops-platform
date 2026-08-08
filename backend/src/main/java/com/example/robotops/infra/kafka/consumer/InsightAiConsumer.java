@@ -15,13 +15,18 @@ import com.example.robotops.infra.redis.JsonUtil;
 import com.example.robotops.infra.websocket.WebsocketService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.annotation.RetryableTopic;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Service;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class InsightConsumer {
+public class InsightAiConsumer {
 
     private final JsonUtil jsonUtil;
     private final InsightAnalyzer insightAnalyzer;
@@ -54,16 +59,38 @@ public class InsightConsumer {
     }
 
 
+    @RetryableTopic(
+            attempts = "4",
+            backoff = @Backoff(
+                    delay = 1_000,
+                    multiplier = 2.0,
+                    maxDelay = 10_000
+            ),
+            retryTopicSuffix = "-retry",
+            dltTopicSuffix = "-dlt"
+    )
     @KafkaListener(topics = "robot.device.feed", groupId = "openAi", concurrency = "3")
     public void sendInsightOpenAI(String message) {
 
         InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
         AiSummaryResponse response = openAiClient.request(insightFeedResponse);
-        // todo : kafka 쪼개야함
 
-        AiAnalysisRequest aiAnalysisRequest = AiAnalysisRequest.of(insightFeedResponse, response);
-        kafkaProducer.createAiAnalysis(aiAnalysisRequest);
 
+        kafkaProducer.createAiAnalysis(AiAnalysisRequest.of(insightFeedResponse, response));
+
+    }
+
+    @DltHandler
+    public void handleDlt(
+            String message,
+            @Header(KafkaHeaders.RECEIVED_TOPIC)
+            String originalTopic
+    ) {
+        log.error(
+                "AI message moved to DLT. originalTopic={}, message={}",
+                originalTopic,
+                message
+        );
     }
 
     @KafkaListener(topics = "robot.device.feed.analysis", groupId = "db")

@@ -3,6 +3,7 @@ package com.example.robotops.domain.service;
 import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.repository.DeviceEventRepository;
+import com.example.robotops.domain.response.DeviceEventResponse;
 import com.example.robotops.domain.response.RedisEventResponse;
 import com.example.robotops.global.errorMessage.StringEnum;
 import com.example.robotops.infra.kafka.producer.KafkaProducer;
@@ -75,6 +76,10 @@ public class DeviceEventService {
                     );
                 })
                 .toList();
+    }
+
+    public List<DeviceEventResponse> getDeviceEventsByRobotId(String robotId) {
+        return deviceEventRepository.findAllDeviceEvents(robotId).stream().map(DeviceEventResponse::of).toList();
     }
 
 

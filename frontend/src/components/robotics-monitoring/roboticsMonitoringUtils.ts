@@ -122,6 +122,34 @@ export function formatKoreanTime(iso?: string) {
   })
 }
 
+export type EventSeverityPalette = {
+  error: string
+  warning: string
+  info?: string
+  secondary: string
+}
+
+export function eventSeverityColor(
+  severity: string | undefined,
+  colors: EventSeverityPalette
+): string {
+  const s = (severity ?? "").toUpperCase()
+  if (s === "CRITICAL" || s === "ERROR") return colors.error
+  if (s === "WARN" || s === "WARNING") return colors.warning
+  if (s === "INFO") return colors.info ?? colors.secondary
+  return colors.secondary
+}
+
+export function isAlertEventSeverity(severity: string | undefined): boolean {
+  const s = (severity ?? "").toUpperCase()
+  return (
+    s === "CRITICAL" ||
+    s === "ERROR" ||
+    s === "WARN" ||
+    s === "WARNING"
+  )
+}
+
 export function formatKoreanRelativeTime(iso?: string) {
   if (!iso) return "-"
   const t = Date.parse(iso)

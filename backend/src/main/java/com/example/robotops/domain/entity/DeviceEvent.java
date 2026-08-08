@@ -1,5 +1,6 @@
 package com.example.robotops.domain.entity;
 
+import com.example.robotops.domain.deviceStateType.EventStatus;
 import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.deviceStateType.Severity;
 import jakarta.persistence.Column;
@@ -10,6 +11,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import lombok.AccessLevel;
@@ -46,9 +48,9 @@ public class DeviceEvent {
     @Column(name = "severity", nullable = false)
     private Severity severity;
 
-//    @Enumerated(EnumType.STRING)
-//    @Column(name = "current_mission", nullable = false)
-//    private Mission currentMission;
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    private EventStatus eventStatus = EventStatus.OPEN;
 
     @Column(columnDefinition = "jsonb")
     @JdbcTypeCode(SqlTypes.JSON)
@@ -57,8 +59,8 @@ public class DeviceEvent {
     @CreationTimestamp
     private OffsetDateTime createdAt;
 
-    // todo : resolved 추가
-    // todo : 크리티컬 -> action, warning -> 보고 분석, info -> mode 변경
+    private LocalDateTime resolvedAt;
+
     public static DeviceEvent of(String deviceId, EventType eventType, Severity severity, Map<String, Object> payload) {
         return DeviceEvent.builder()
                 .deviceId(deviceId)

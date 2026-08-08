@@ -3,6 +3,7 @@ package com.example.robotops.infra.redis;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.request.DeviceStateRequest;
 import com.example.robotops.domain.response.DeviceInsightResponse;
+import com.example.robotops.domain.response.DeviceStateResponse;
 import com.example.robotops.domain.response.InsightFeedResponse;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -12,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,14 @@ public class RedisService {
         stringRedisTemplate.opsForValue().set(
                 RedisKey.DEVICE_STATE.key(req.deviceId()), jsonUtil.toJson(req));
 
+    }
+
+    public Optional<DeviceStateResponse> getState(String deviceId) {
+        return Optional.ofNullable(
+                stringRedisTemplate.opsForValue().get(RedisKey.DEVICE_STATE.key(deviceId))
+        ).map(
+                json -> jsonUtil.fromJson(json, DeviceStateResponse.class)
+        );
     }
 
     // mqtt 최신 수신 시간 저장

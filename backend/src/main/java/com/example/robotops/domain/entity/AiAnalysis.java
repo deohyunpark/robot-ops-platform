@@ -31,7 +31,7 @@ public class AiAnalysis {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private long id;
+    private Long id;
 
     @Column(name = "robot_id", nullable = false)
     private String robotId;
