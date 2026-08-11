@@ -10,7 +10,6 @@ import org.eclipse.paho.client.mqttv3.MqttCallback;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -23,21 +22,13 @@ public class MqttIngestor implements MqttCallback {
 
     private final TelemetryService telemetryService;
     private final MeterRegistry meterRegistry;
+    private final MqttClient mqttClient;
 
     @Value("${app.mqtt.brokerUrl}")
     private String brokerUrl;
 
-    private MqttClient mqttClient;
-
     @EventListener(ApplicationReadyEvent.class)
     public void start() throws Exception {
-        String clientId = "ingestor-" + System.currentTimeMillis();
-
-        mqttClient = new MqttClient(
-                brokerUrl,
-                clientId,
-                new MemoryPersistence()
-        );
 
         mqttClient.setCallback(this);
 
@@ -45,7 +36,9 @@ public class MqttIngestor implements MqttCallback {
         options.setAutomaticReconnect(true);
         options.setCleanSession(true);
 
-        mqttClient.connect(options);
+        if (!mqttClient.isConnected()) {
+            mqttClient.connect(options);
+        }
         mqttClient.subscribe("factory/+/robot/+/telemetry", 1);
 
         log.info("MQTT connected. brokerUrl={}", brokerUrl);

@@ -1,7 +1,7 @@
 package com.example.robotops.domain.service.event;
 
-import com.example.robotops.domain.deviceStateType.EventType;
-import com.example.robotops.domain.deviceStateType.Severity;
+import com.example.robotops.domain.enums.EventType;
+import com.example.robotops.domain.enums.Severity;
 import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.response.eventpayload.PayloadType;
 import com.example.robotops.domain.service.RuleHandler;

@@ -1,7 +1,7 @@
 package com.example.robotops.domain.entity;
 
-import com.example.robotops.domain.deviceStateType.Mission;
-import com.example.robotops.domain.deviceStateType.Mode;
+import com.example.robotops.domain.enums.Mission;
+import com.example.robotops.domain.enums.Mode;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;

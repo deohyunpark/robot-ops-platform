@@ -1,6 +1,6 @@
 package com.example.robotops.domain.service;
 
-import com.example.robotops.domain.deviceStateType.Severity;
+import com.example.robotops.domain.enums.Severity;
 import com.example.robotops.domain.response.DailyReportResponse;
 import com.example.robotops.domain.response.DeviceEventResponse;
 import com.example.robotops.domain.response.PriorityDeviceResponse;

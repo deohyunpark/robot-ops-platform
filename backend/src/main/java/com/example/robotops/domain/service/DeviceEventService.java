@@ -1,7 +1,7 @@
 package com.example.robotops.domain.service;
 
-import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.entity.DeviceEvent;
+import com.example.robotops.domain.enums.EventType;
 import com.example.robotops.domain.repository.DeviceEventRepository;
 import com.example.robotops.domain.response.DeviceEventResponse;
 import com.example.robotops.domain.response.RedisEventResponse;
@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
 import org.springframework.stereotype.Service;
 
@@ -26,7 +25,6 @@ import org.springframework.stereotype.Service;
 public class DeviceEventService {
 
     private final DeviceEventRepository deviceEventRepository;
-    private final ApplicationEventPublisher applicationEventPublisher;
     private final RedisService redisService;
     private final KafkaProducer kafkaProducer;
 
@@ -86,5 +84,9 @@ public class DeviceEventService {
 
     public List<DeviceEventResponse> findTodayEvents(OffsetDateTime from, OffsetDateTime to) {
         return deviceEventRepository.findTodayEvents(from, to);
+    }
+
+    public List<DeviceEventResponse> findOfflineEvents(OffsetDateTime from, OffsetDateTime to) {
+        return deviceEventRepository.findOfflineEvents(from, to);
     }
 }

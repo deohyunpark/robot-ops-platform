@@ -80,6 +80,7 @@ public class RedisService {
         stringRedisTemplate.opsForZSet().remove(key, deviceId);
     }
 
+
     public void updateMetric(String deviceId, String metric, Object value) {
 
         String key = RedisKey.METRIC.key(deviceId, metric);
@@ -158,6 +159,23 @@ public class RedisService {
                 .setIfAbsent(key, "1");
 
         return Boolean.TRUE.equals(success);
+    }
+
+    public void deleteEventInList(DeviceEvent deviceEvent) {
+        String allDeviceKey = RedisKey.ALL_DEVICE_EVENT.key();
+        String allDeviceValue = deviceEvent.getDeviceId() + ":" + deviceEvent.getEventType().name() + ":" + deviceEvent.getSeverity().name();
+
+        stringRedisTemplate.opsForZSet()
+                .remove(allDeviceKey, allDeviceValue);
+    }
+
+    public void deleteEvent(DeviceEvent event) {
+        String key = RedisKey.DEVICE_EVENT.key(
+                event.getDeviceId(),
+                event.getEventType().name()
+        );
+
+        stringRedisTemplate.delete(key);
     }
 
     public Set<TypedTuple<String>> getAllEvents() {

@@ -1,18 +1,24 @@
 package com.example.robotops.domain.entity;
 
-import com.example.robotops.domain.deviceStateType.EventStatus;
-import com.example.robotops.domain.deviceStateType.EventType;
-import com.example.robotops.domain.deviceStateType.Severity;
+import com.example.robotops.domain.enums.EventStatus;
+import com.example.robotops.domain.enums.EventType;
+import com.example.robotops.domain.enums.Severity;
+import com.example.robotops.error.ErrorCode;
+import com.example.robotops.error.RobotOpsException;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -29,6 +35,7 @@ import org.hibernate.type.SqlTypes;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 @Table(name = "device_event")
 @Entity
 public class DeviceEvent {
@@ -59,7 +66,15 @@ public class DeviceEvent {
     @CreationTimestamp
     private OffsetDateTime createdAt;
 
-    private LocalDateTime resolvedAt;
+    private OffsetDateTime resolvedAt;
+
+    @JsonIgnore
+    @OneToOne(
+            mappedBy = "deviceEvent",
+            fetch = FetchType.LAZY
+    )
+    private EventAction eventAction;
+
 
     public static DeviceEvent of(String deviceId, EventType eventType, Severity severity, Map<String, Object> payload) {
         return DeviceEvent.builder()
@@ -68,5 +83,31 @@ public class DeviceEvent {
                 .severity(severity)
                 .payload(payload)
                 .build();
+    }
+
+    public void acknowledged() {
+        if (eventStatus != EventStatus.OPEN) {
+            throw new RobotOpsException(
+                    ErrorCode.INVALID_EVENT_STATUS
+            );
+        }
+
+        this.eventStatus = EventStatus.ACKNOWLEDGED;
+    }
+
+    public void resolve() {
+        if (eventStatus != EventStatus.ACKNOWLEDGED) {
+            throw new RobotOpsException(
+                    ErrorCode.INVALID_EVENT_STATUS
+            );
+        }
+
+        this.eventStatus = EventStatus.RESOLVED;
+        this.resolvedAt = OffsetDateTime.now();
+    }
+
+    @JsonIgnore
+    public List<ActionChecklistItem> getActionChecklistItem() {
+        return this.eventAction.getActionCheckList().getItems();
     }
 }

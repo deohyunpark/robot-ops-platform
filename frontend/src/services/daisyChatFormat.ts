@@ -220,6 +220,69 @@ function parseDetailPayload(raw: string): DaisyEventField[] {
     .filter((x): x is DaisyEventField => !!x)
 }
 
+function extractCardFields(rest: string): DaisyEventField[] {
+  const fields: DaisyEventField[] = []
+  const seen = new Set<string>()
+
+  const add = (label: string, value: string) => {
+    const trimmedLabel = label.trim()
+    const trimmedValue = value.trim()
+    if (!trimmedLabel || !trimmedValue) return
+    const key = `${trimmedLabel}\0${trimmedValue}`
+    if (seen.has(key)) return
+    seen.add(key)
+    fields.push({ label: trimmedLabel, value: trimmedValue })
+  }
+
+  for (const rawLine of rest.split("\n")) {
+    const line = rawLine.trim()
+    if (!line) continue
+
+    const segments = line.includes(" - ")
+      ? line.split(/\s+-\s+(?=(?:\*\*)?[^:\n]+:)/)
+      : [line]
+
+    for (let segment of segments) {
+      segment = segment.trim().replace(/^[-•·*]\s+/, "")
+
+      const bold = segment.match(/^\*\*([^*]+)\*\*:\s*(.*)$/)
+      if (bold) {
+        add(bold[1], bold[2])
+        continue
+      }
+
+      const plain = segment.match(/^([^:]+):\s*(.+)$/)
+      if (plain) {
+        add(plain[1], plain[2])
+      }
+    }
+  }
+
+  return fields
+}
+
+function applyCardField(card: DaisyEventCard, label: string, value: string): void {
+  const lower = label.toLowerCase()
+
+  if (label.includes("이벤트 타입") || lower.includes("event type")) {
+    card.eventType = value
+  } else if (
+    label.includes("심각도") ||
+    lower.includes("severity") ||
+    label.includes("위험 수준") ||
+    lower.includes("risk level")
+  ) {
+    card.severity = value
+  } else if (label.includes("발생 시각") || lower.includes("occurred")) {
+    card.occurredAt = formatTimestamp(value)
+  } else if (label.includes("상세 정보") || lower.includes("detail")) {
+    card.detailRaw = value
+    card.details.push(...parseDetailPayload(value))
+  } else {
+    card.details.push({ label, value })
+  }
+}
+
 function parseEventCardChunk(chunk: string): DaisyEventCard | null {
   const head = chunk.match(/^(\d+)\.\s+\*\*([^*]+)\*\*/)
   if (!head) return null
@@ -234,29 +297,9 @@ function parseEventCardChunk(chunk: string): DaisyEventCard | null {
     detailRaw: "",
   }
 
-  const rest = chunk.slice(head[0].length).trim().replace(/^-\s*/, "")
-  const fieldChunks = rest.split(/\s+-\s+\*\*/).map((part) => {
-    const trimmed = part.trim()
-    return trimmed.startsWith("**") ? trimmed.slice(2) : trimmed
-  })
-
-  for (const fieldChunk of fieldChunks) {
-    const colon = fieldChunk.indexOf(":**")
-    if (colon <= 0) continue
-
-    const label = fieldChunk.slice(0, colon).trim()
-    const value = fieldChunk.slice(colon + 3).trim()
-
-    if (label.includes("이벤트 타입") || label.toLowerCase().includes("event type")) {
-      card.eventType = value
-    } else if (label.includes("심각도") || label.toLowerCase().includes("severity")) {
-      card.severity = value
-    } else if (label.includes("발생 시각") || label.toLowerCase().includes("occurred")) {
-      card.occurredAt = formatTimestamp(value)
-    } else if (label.includes("상세 정보") || label.toLowerCase().includes("detail")) {
-      card.detailRaw = value
-      card.details = parseDetailPayload(value)
-    }
+  const rest = chunk.slice(head[0].length).trim()
+  for (const field of extractCardFields(rest)) {
+    applyCardField(card, field.label, field.value)
   }
 
   return card
@@ -637,8 +680,10 @@ export function severityColor(
   colors: { critical: string; warning: string; info: string; fallback: string }
 ): string {
   const x = severity.toUpperCase()
-  if (x === "CRITICAL" || x === "ERROR") return colors.critical
-  if (x === "WARN" || x === "WARNING") return colors.warning
-  if (x === "INFO") return colors.info
+  if (x === "CRITICAL" || x === "ERROR" || x === "HIGH") return colors.critical
+  if (x === "WARN" || x === "WARNING" || x === "MIDDLE" || x === "MEDIUM") {
+    return colors.warning
+  }
+  if (x === "INFO" || x === "LOW") return colors.info
   return colors.fallback
 }

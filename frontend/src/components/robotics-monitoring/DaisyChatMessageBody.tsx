@@ -102,10 +102,23 @@ function DaisyEventCardView(props: {
     fallback: textSecondary,
   })
 
-  const rows = [
+  const rows: Array<{ label: string; value: string; highlight?: string }> = [
     { label: "이벤트 타입", value: card.eventType },
-    { label: "심각도", value: card.severity, highlight: sevColor },
     { label: "발생 시각", value: card.occurredAt },
+    ...card.details.map((detail) => ({
+      label: detail.label,
+      value: detail.value,
+      highlight:
+        /^(HIGH|CRITICAL|ERROR)$/i.test(detail.value) ||
+        /^(MIDDLE|MEDIUM|WARN|WARNING)$/i.test(detail.value)
+          ? severityColor(detail.value, {
+              critical: statusError,
+              warning: statusWarning,
+              info: accent,
+              fallback: textSecondary,
+            })
+          : undefined,
+    })),
   ].filter((row) => row.value)
 
   return (
@@ -204,45 +217,7 @@ function DaisyEventCardView(props: {
           </div>
         ))}
 
-        {card.details.length ? (
-          <div
-            style={{
-              marginTop: 2,
-              borderRadius: 10,
-              border: `1px solid ${withAlpha(borderColor, 0.85)}`,
-              background: withAlpha(cardBackground, 0.65),
-              padding: "8px 10px",
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: "6px 10px",
-            }}
-          >
-            {card.details.map((detail) => (
-              <div key={`${card.robotId}-${detail.label}`} style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    ...monoFont,
-                    fontSize: coerceFontSize(monoFont?.fontSize, 10),
-                    color: textSecondary,
-                    marginBottom: 2,
-                  }}
-                >
-                  {detail.label}
-                </div>
-                <div
-                  style={{
-                    ...monoFont,
-                    fontSize: coerceFontSize(monoFont?.fontSize, 11),
-                    color: textPrimary,
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {detail.value}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : card.detailRaw ? (
+        {!rows.length && card.detailRaw ? (
           <pre
             style={{
               margin: 0,

@@ -103,6 +103,7 @@ public class DeviceTool {
 
             Redis에 저장된 최신 상태를 조회하며
             절대로 추측해서 답변하지 않는다.
+            사용률이나 퍼센트가 높은걸 묻는 질문엔 90이상인 것만 답변한다. 
             """)
     public DeviceStateResponse getDeviceState(
             @ToolParam(description = "조회할 로봇 ID")

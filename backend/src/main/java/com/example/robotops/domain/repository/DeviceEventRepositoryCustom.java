@@ -1,7 +1,7 @@
 package com.example.robotops.domain.repository;
 
-import com.example.robotops.domain.deviceStateType.EventType;
 import com.example.robotops.domain.entity.DeviceEvent;
+import com.example.robotops.domain.enums.EventType;
 import com.example.robotops.domain.response.DeviceEventResponse;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -22,4 +22,10 @@ public interface DeviceEventRepositoryCustom {
     Optional<OffsetDateTime> findLatestOpenEventAt(String deviceId);
 
     List<DeviceEventResponse> findTodayEvents(OffsetDateTime from, OffsetDateTime to);
+
+    List<DeviceEventResponse> findOfflineEvents(OffsetDateTime from, OffsetDateTime to);
+
+    Optional<DeviceEvent> findHighestPriorityOpenEvent(String deviceId);
+
+    Optional<DeviceEvent> findByIdWithAction(Long eventId);
 }

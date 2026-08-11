@@ -145,7 +145,16 @@ export function useDeviceTableRenderer(args: {
                   info: accent,
                   secondary: textSecondary,
                 })
-                const isOutageDevice = outageDeviceIds?.has(d.id) ?? false
+                const isCriticalOutage = outageDeviceIds?.has(d.id) ?? false
+                const isWarningEvent =
+                  !isCriticalOutage &&
+                  (severity === "WARN" || severity === "WARNING")
+                const rowHighlightColor = isCriticalOutage
+                  ? statusError
+                  : isWarningEvent
+                    ? statusWarning
+                    : null
+                const hasEventHighlight = rowHighlightColor !== null
                 const batteryBad = d.battery <= lowBatteryThreshold
                 const tempBad = d.temperature >= abnormalTempThreshold
                 const eventBad = eventText !== "-"
@@ -154,13 +163,13 @@ export function useDeviceTableRenderer(args: {
 
                 const rowBg = isChatInsertHover
                   ? withAlpha(accent, 0.24)
-                  : isOutageDevice
-                    ? withAlpha(statusError, isSelected ? 0.24 : 0.14)
+                  : hasEventHighlight
+                    ? withAlpha(rowHighlightColor!, isSelected ? 0.24 : 0.14)
                     : isSelected
                       ? withAlpha(accent, 0.1)
                       : "transparent"
-                const rowHover = isOutageDevice
-                  ? withAlpha(statusError, 0.1)
+                const rowHover = hasEventHighlight
+                  ? withAlpha(rowHighlightColor!, 0.1)
                   : withAlpha(accent, chatInsertActive ? 0.14 : 0.06)
 
                 return (
@@ -188,9 +197,9 @@ export function useDeviceTableRenderer(args: {
                       gap: 12,
                       padding: "12px 14px",
                       border: "none",
-                      borderBottom: `1px solid ${isOutageDevice ? withAlpha(statusError, 0.28) : borderColor}`,
-                      borderLeft: isOutageDevice
-                        ? `3px solid ${statusError}`
+                      borderBottom: `1px solid ${hasEventHighlight ? withAlpha(rowHighlightColor!, 0.28) : borderColor}`,
+                      borderLeft: hasEventHighlight
+                        ? `3px solid ${rowHighlightColor!}`
                         : undefined,
                       background: rowBg,
                       color: textPrimary,
@@ -232,9 +241,9 @@ export function useDeviceTableRenderer(args: {
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           textAlign: "center",
-                          fontWeight: isChatInsertHover || isOutageDevice ? 700 : 400,
-                          color: isOutageDevice
-                            ? statusError
+                          fontWeight: isChatInsertHover || hasEventHighlight ? 700 : 400,
+                          color: hasEventHighlight
+                            ? rowHighlightColor!
                             : isChatInsertHover
                               ? accent
                               : textPrimary,
@@ -384,8 +393,24 @@ export function useDeviceTableRenderer(args: {
                               ? 700
                               : 400,
                           whiteSpace: "nowrap",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
                         }}
                       >
+                        {hasEventHighlight ? (
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: 999,
+                              background: rowHighlightColor!,
+                              boxShadow: `0 0 8px ${withAlpha(rowHighlightColor!, 0.75)}`,
+                              flexShrink: 0,
+                            }}
+                          />
+                        ) : null}
                         {eventText}
                       </span>
                     </span>

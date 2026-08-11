@@ -1,3 +1,7 @@
+import type {
+  AckResponse,
+  ActionChecklistItemResponse,
+} from "../../services/eventAction"
 import type { BackendDeviceEvent, DeviceEventFeedRow } from "./telemetryAdapter"
 import { parseKoreanTimestampMs } from "./roboticsMonitoringUtils"
 
@@ -42,6 +46,12 @@ export type EventTimelineEntry = {
   isError: boolean
 }
 
+export type EventChecklistItem = {
+  id: string
+  label: string
+  checked: boolean
+}
+
 export type EventDetailAckState = {
   acknowledged: boolean
   assignee: string
@@ -49,6 +59,10 @@ export type EventDetailAckState = {
   resolved: boolean
   resolvedAt: string
   resolutionDescription: string
+  checklist: EventChecklistItem[]
+  draftSavedAt: string
+  backendEventId: number | null
+  eventActionId: number | null
 }
 
 export function outageEventRowKey(row: DeviceEventFeedRow): string {
@@ -72,9 +86,48 @@ export function findMatchingBackendEvent(
     const ts = eventTimestamp(ev)
     const ms = parseKoreanTimestampMs(ts)
     if (Number.isNaN(ms) || Number.isNaN(rowTs)) {
-      if (!best) best = ev
+      if (!best || (!best.id && ev.id)) best = ev
       continue
     }
+    const delta = Math.abs(ms - rowTs)
+    if (delta < bestDelta || (delta === bestDelta && !best?.id && ev.id)) {
+      bestDelta = delta
+      best = ev
+    }
+  }
+  return best
+}
+
+export function parseBackendEventId(id: string | null | undefined): number | null {
+  if (id == null) return null
+  const trimmed = String(id).trim()
+  if (!trimmed) return null
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export function resolveAckBackendEvent(
+  events: BackendDeviceEvent[],
+  row: DeviceEventFeedRow
+): BackendDeviceEvent | null {
+  const matched = findMatchingBackendEvent(events, row)
+  if (parseBackendEventId(matched?.id ?? null)) return matched
+
+  const rowTs = parseKoreanTimestampMs(row.ts)
+  const candidates = events.filter(
+    (ev) =>
+      (ev.eventType ?? "").toUpperCase() === row.eventType.toUpperCase() &&
+      parseBackendEventId(ev.id) != null
+  )
+  if (!candidates.length) return matched
+
+  if (Number.isNaN(rowTs)) return candidates[0]
+
+  let best = candidates[0]
+  let bestDelta = Number.POSITIVE_INFINITY
+  for (const ev of candidates) {
+    const ms = parseKoreanTimestampMs(eventTimestamp(ev))
+    if (Number.isNaN(ms)) continue
     const delta = Math.abs(ms - rowTs)
     if (delta < bestDelta) {
       bestDelta = delta
@@ -207,15 +260,247 @@ export function defaultAckState(): EventDetailAckState {
     resolved: false,
     resolvedAt: "",
     resolutionDescription: "",
+    checklist: [],
+    draftSavedAt: "",
+    backendEventId: null,
+    eventActionId: null,
+  }
+}
+
+export const ASSIGNEE_OPTIONS = [
+  "김현장",
+  "이운영",
+  "박정비",
+  "최관제",
+  "정배치",
+] as const
+
+const CHECKLIST_TEMPLATES_KO: Record<string, string[]> = {
+  OFFLINE: [
+    "현장 통신 장비 상태 확인",
+    "로봇 전원 및 네트워크 재기동",
+    "MQTT/브로커 연결 점검",
+    "복구 후 텔레메트리 수신 확인",
+  ],
+  EMERGENCY_STOP: [
+    "현장 안전 구역 확보",
+    "E-STOP 원인 확인 및 해제",
+    "센서·범퍼 상태 점검",
+    "재가동 전 경로 이상 여부 확인",
+  ],
+  EMERGENCY: [
+    "현장 안전 상태 확인",
+    "비상 원인 파악 및 기록",
+    "관련 장비 정지/격리",
+    "복구 절차 수행 및 재가동",
+  ],
+  LOW_BATTERY: [
+    "배터리 잔량 및 충전 상태 확인",
+    "충전 스테이션 이동/연결",
+    "회수 또는 교체 필요 여부 판단",
+    "충전 후 정상 동작 확인",
+  ],
+  COLLISION: [
+    "충돌 지점 현장 확인",
+    "장애물 제거 및 손상 점검",
+    "센서 캘리브레이션 확인",
+    "테스트 주행 후 정상화 확인",
+  ],
+  OBSTACLE: [
+    "경로상 장애물 확인",
+    "장애물 제거 또는 우회 경로 설정",
+    "맵/경로 데이터 이상 여부 확인",
+    "재시작 후 이동 테스트",
+  ],
+  OVERHEAT: [
+    "장비 온도 및 냉각 상태 확인",
+    "부하/속도 설정 점검",
+    "주변 환경(환기) 확인",
+    "정상 온도 복귀 확인",
+  ],
+}
+
+const CHECKLIST_DEFAULT_KO = [
+  "현장 안전 상태 확인",
+  "장비 상태 및 로그 점검",
+  "원인 분석 및 조치 기록",
+  "관련 담당자 공유",
+  "복구 후 정상 동작 확인",
+]
+
+const CHECKLIST_TEMPLATES_EN: Record<string, string[]> = {
+  OFFLINE: [
+    "Check on-site network equipment",
+    "Restart robot power and network",
+    "Verify MQTT broker connectivity",
+    "Confirm telemetry after recovery",
+  ],
+  EMERGENCY_STOP: [
+    "Secure the work area",
+    "Identify and release E-STOP cause",
+    "Inspect sensors and bumper",
+    "Verify path before restart",
+  ],
+  EMERGENCY: [
+    "Confirm on-site safety",
+    "Identify and record emergency cause",
+    "Isolate affected equipment",
+    "Execute recovery and restart",
+  ],
+  LOW_BATTERY: [
+    "Check battery level and charging",
+    "Move/connect to charging station",
+    "Decide retrieval or swap if needed",
+    "Verify normal operation after charge",
+  ],
+  COLLISION: [
+    "Inspect collision site",
+    "Remove obstacles and check damage",
+    "Verify sensor calibration",
+    "Test drive after recovery",
+  ],
+  OBSTACLE: [
+    "Inspect path obstruction",
+    "Remove obstacle or reroute",
+    "Check map/path data",
+    "Test movement after restart",
+  ],
+  OVERHEAT: [
+    "Check temperature and cooling",
+    "Review load/speed settings",
+    "Verify ventilation environment",
+    "Confirm return to normal temp",
+  ],
+}
+
+const CHECKLIST_DEFAULT_EN = [
+  "Confirm on-site safety",
+  "Inspect device status and logs",
+  "Analyze cause and record actions",
+  "Share update with stakeholders",
+  "Verify normal operation after fix",
+]
+
+export function checklistItemsFromActionResponse(
+  items: ActionChecklistItemResponse[]
+): EventChecklistItem[] {
+  return [...items]
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((item) => ({
+      id: String(item.id),
+      label: item.content,
+      checked: item.checked,
+    }))
+}
+
+export function ackStateFromActionResponse(
+  response: AckResponse,
+  backendEventId: number,
+  existing?: Partial<EventDetailAckState>
+): EventDetailAckState {
+  const base = normalizeAckState(existing)
+  return {
+    ...base,
+    acknowledged: true,
+    assignee: response.operation || base.assignee,
+    acknowledgedAt: response.ackStartTime || base.acknowledgedAt,
+    backendEventId,
+    eventActionId: response.checkListId,
+    checklist: checklistItemsFromActionResponse(
+      response.actionChecklistItemResponses ?? []
+    ),
+  }
+}
+
+export function checklistSavePayload(
+  checklist: EventChecklistItem[],
+  description: string
+): {
+  description: string
+  itemSaveRequests: { id: number; checked: boolean }[]
+} {
+  return {
+    description: description.trim(),
+    itemSaveRequests: checklist
+      .map((item) => ({
+        id: Number(item.id),
+        checked: item.checked,
+      }))
+      .filter((item) => Number.isFinite(item.id)),
+  }
+}
+
+export function buildEventChecklist(
+  eventType: string,
+  language: "ko" | "en"
+): EventChecklistItem[] {
+  const type = eventType.trim().toUpperCase() || "EVENT"
+  const ko = language === "ko"
+  const templates = ko ? CHECKLIST_TEMPLATES_KO : CHECKLIST_TEMPLATES_EN
+  const labels = templates[type] ?? (ko ? CHECKLIST_DEFAULT_KO : CHECKLIST_DEFAULT_EN)
+  return labels.map((label, index) => ({
+    id: `${type}-${index}`,
+    label,
+    checked: false,
+  }))
+}
+
+export function normalizeAckState(
+  raw: Partial<EventDetailAckState> | undefined
+): EventDetailAckState {
+  const base = defaultAckState()
+  if (!raw) return base
+  return {
+    ...base,
+    ...raw,
+    checklist: Array.isArray(raw.checklist)
+      ? raw.checklist.map((item, index) => ({
+          id: item.id || `item-${index}`,
+          label: item.label || "",
+          checked: Boolean(item.checked),
+        }))
+      : [],
+    draftSavedAt: raw.draftSavedAt ?? "",
+    backendEventId:
+      typeof raw.backendEventId === "number" && Number.isFinite(raw.backendEventId)
+        ? raw.backendEventId
+        : null,
+    eventActionId:
+      typeof raw.eventActionId === "number" && Number.isFinite(raw.eventActionId)
+        ? raw.eventActionId
+        : null,
+  }
+}
+
+export function checklistProgress(checklist: EventChecklistItem[]): {
+  checked: number
+  total: number
+  percent: number
+} {
+  const total = checklist.length
+  if (total === 0) return { checked: 0, total: 0, percent: 0 }
+  const checked = checklist.filter((item) => item.checked).length
+  return {
+    checked,
+    total,
+    percent: Math.round((checked / total) * 100),
   }
 }
 
 export function loadEventAckMap(): Record<string, EventDetailAckState> {
   try {
-    const raw = localStorage.getItem("rm-event-ack-v1")
+    const raw =
+      localStorage.getItem("rm-event-ack-v2") ??
+      localStorage.getItem("rm-event-ack-v1")
     if (!raw) return {}
-    const parsed = JSON.parse(raw) as Record<string, EventDetailAckState>
-    return parsed && typeof parsed === "object" ? parsed : {}
+    const parsed = JSON.parse(raw) as Record<string, Partial<EventDetailAckState>>
+    if (!parsed || typeof parsed !== "object") return {}
+    return Object.fromEntries(
+      Object.entries(parsed).map(([key, value]) => [
+        key,
+        normalizeAckState(value),
+      ])
+    )
   } catch {
     return {}
   }
@@ -223,8 +508,17 @@ export function loadEventAckMap(): Record<string, EventDetailAckState> {
 
 export function saveEventAckMap(map: Record<string, EventDetailAckState>) {
   try {
-    localStorage.setItem("rm-event-ack-v1", JSON.stringify(map))
+    localStorage.setItem("rm-event-ack-v2", JSON.stringify(map))
   } catch {
     /* ignore quota */
+  }
+}
+
+export function clearEventAckMap() {
+  try {
+    localStorage.removeItem("rm-event-ack-v2")
+    localStorage.removeItem("rm-event-ack-v1")
+  } catch {
+    /* ignore */
   }
 }

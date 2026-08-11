@@ -1,5 +1,7 @@
-import { backendEventsFromPayload } from "../components/robotics-monitoring/telemetryAdapter"
-import type { BackendDeviceEvent } from "../components/robotics-monitoring/telemetryAdapter"
+import {
+  eventBatchFromPayload,
+  type BackendDeviceEvent,
+} from "../components/robotics-monitoring/telemetryAdapter"
 import { API_BASE_URL } from "./apiBaseUrl"
 
 /**
@@ -25,5 +27,5 @@ export async function fetchDashboardDeviceEvents(
     )
   }
   const json: unknown = await res.json()
-  return backendEventsFromPayload(json)
+  return eventBatchFromPayload(json)
 }

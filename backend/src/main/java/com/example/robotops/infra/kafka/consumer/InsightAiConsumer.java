@@ -49,7 +49,7 @@ public class InsightAiConsumer {
         // 2. 이벤트 생성시 필요한 context 생성
         EventContext eventContext = new EventContext(telemetryPayload, redisSnapshotBuilder.build(telemetryPayload));
 
-        // 3. rule check 후 event 생성
+        // 3. rule check 후 insight 생성
         InsightFeedResponse insightFeedResponse = insightAnalyzer.analyze(eventContext);
 
         // 3. request DB, Redis, websocket 발행 -> kafka

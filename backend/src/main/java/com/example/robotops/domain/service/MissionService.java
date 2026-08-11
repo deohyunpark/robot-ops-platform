@@ -1,9 +1,9 @@
 package com.example.robotops.domain.service;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
-import com.example.robotops.domain.deviceStateType.Mission;
 import com.example.robotops.domain.entity.MissionCurrent;
 import com.example.robotops.domain.entity.MissionHistoryLog;
+import com.example.robotops.domain.enums.Mission;
 import com.example.robotops.domain.repository.MissionCurrentRepository;
 import com.example.robotops.domain.repository.MissionHistoryLogRepository;
 import com.example.robotops.global.errorMessage.StringEnum;
@@ -50,7 +50,6 @@ public class MissionService {
         if (oldMission != Mission.DONE && newMission == Mission.DONE) {
             kafkaProducer.countDone(deviceId);
             kafkaProducer.sendThroughput(deviceId);
-            // todo : 각 device 별 평균 처리 시간
         }
     }
 

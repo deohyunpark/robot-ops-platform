@@ -1,6 +1,6 @@
 package com.example.robotops.domain.service.event;
 
-import com.example.robotops.domain.deviceStateType.Mission;
+import com.example.robotops.domain.enums.Mission;
 import com.example.robotops.global.errorMessage.StringEnum;
 import org.springframework.stereotype.Service;
 

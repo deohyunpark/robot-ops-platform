@@ -1,6 +1,6 @@
 package com.example.robotops.domain.service.insight;
 
-import com.example.robotops.domain.deviceStateType.InsightType;
+import com.example.robotops.domain.enums.InsightType;
 import com.example.robotops.domain.response.eventpayload.PayloadType;
 import com.example.robotops.domain.service.event.RealtimeRule;
 import com.example.robotops.domain.service.event.StatefulRule;

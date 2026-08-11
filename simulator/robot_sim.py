@@ -4,6 +4,7 @@ import random
 import math
 import argparse
 import os
+import threading
 
 from datetime import datetime, timezone, timedelta
 
@@ -15,6 +16,8 @@ KST = timezone(timedelta(hours=9))
 
 DEMO_STATUS_KEY = "demo:simulation:status"
 DEMO_RUNNING = "RUNNING"
+
+COMMAND_CLEAR_EVENT = "CLEAR_EVENT"
 
 
 def now_kst_iso():
@@ -85,7 +88,6 @@ def make_payload(
 
 
 def apply_issue(robot):
-
     issue = robot["issue"]
 
     obstacle = False
@@ -94,11 +96,9 @@ def apply_issue(robot):
     speed = None
     cpu = None
 
-    # 정상
     if issue == "NORMAL":
         pass
 
-    # 배터리 부족
     elif issue == "LOW_BATTERY":
         robot["battery"] = clamp(
             robot["battery"] - 1,
@@ -109,7 +109,6 @@ def apply_issue(robot):
         if robot["battery"] < 20:
             error_code = "LOW_BATTERY"
 
-    # 과열
     elif issue == "OVERHEAT":
         robot["temp"] = clamp(
             robot["temp"] + 1,
@@ -120,21 +119,17 @@ def apply_issue(robot):
         if robot["temp"] > 80:
             error_code = "OVERHEAT"
 
-    # 장애물
     elif issue == "OBSTACLE":
         obstacle = True
         error_code = "OBSTACLE"
 
-    # 충돌
     elif issue == "COLLISION":
         error_code = "COLLISION"
 
-    # 비상정지
     elif issue == "EMERGENCY_STOP":
         estop = True
         error_code = "EMERGENCY_STOP"
 
-    # CPU 상승
     elif issue == "CPU_RISING":
         robot["cpu"] = clamp(
             robot["cpu"] + 3,
@@ -147,7 +142,6 @@ def apply_issue(robot):
 
         cpu = robot["cpu"]
 
-    # 속도 상승
     elif issue == "SPEED_RISING":
         robot["speed"] = clamp(
             robot["speed"] + 0.2,
@@ -163,12 +157,57 @@ def apply_issue(robot):
     return obstacle, error_code, estop, speed, cpu
 
 
-def create_robots(robot_count, issues):
+def clear_event(robot, event_type):
+    """
+    현재 데모 세션에서 특정 장애를 복구한다.
 
+    핵심:
+    - issue를 NORMAL로 바꿔 같은 데모 세션에서는 동일 장애가 다시 발생하지 않게 함
+    - 다음 DEMO START 시 create_robots()가 다시 호출되므로 원래 장애 시나리오가 재생됨
+    """
+
+    event_type = (event_type or robot.get("issue") or "").upper()
+
+    if event_type == "LOW_BATTERY":
+        robot["battery"] = max(robot["battery"], 50.0)
+
+    elif event_type in ("OVERHEAT", "TEMP_RISING"):
+        robot["temp"] = 40.0
+
+    elif event_type == "CPU_RISING":
+        robot["cpu"] = 30.0
+
+    elif event_type == "SPEED_RISING":
+        robot["speed"] = 1.0
+
+    elif event_type == "OFFLINE":
+        robot["online"] = True
+        robot["offline_after"] = float("inf")
+
+    elif event_type == "IDLE":
+        if robot["mission"] == "IDLE":
+            robot["mission"] = "MOVE"
+
+    elif event_type == "CHARGING":
+        if robot["mission"] == "CHARGE":
+            robot["mission"] = "MOVE"
+
+    # OBSTACLE / COLLISION / EMERGENCY_STOP / ERROR 등은
+    # apply_issue()가 issue를 보고 매번 payload에 상태를 넣으므로
+    # issue만 NORMAL로 바꾸면 다음 telemetry부터 정상 상태로 나감.
+    robot["issue"] = "NORMAL"
+    robot["online"] = True
+
+    print(
+        f"[COMMAND] cleared event: "
+        f"robot={robot['id']}, eventType={event_type}"
+    )
+
+
+def create_robots(robot_count, issues):
     robots = []
 
     for i in range(robot_count):
-
         rid = f"RBT-{i + 1:04d}"
 
         issue = (
@@ -238,7 +277,6 @@ def create_robots(robot_count, issues):
 
 
 def main():
-
     ap = argparse.ArgumentParser()
 
     ap.add_argument("--host", default="localhost")
@@ -256,19 +294,6 @@ def main():
         decode_responses=True
     )
 
-    client = mqtt.Client(
-        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=f"robot-sim-{random.randint(1000, 9999)}"
-    )
-
-    client.connect(
-        args.host,
-        args.port,
-        keepalive=60
-    )
-
-    client.loop_start()
-
     issues = [
         "NORMAL",
         "LOW_BATTERY",
@@ -281,12 +306,100 @@ def main():
         "OFFLINE"
     ]
 
-    # 최초에는 한 번 생성해두되,
-    # 실제 데모 시작 시 다시 초기화함
-    robots = create_robots(
-        args.robots,
-        issues
+    # MQTT callback thread와 simulation loop가 robots를 같이 사용하므로 lock 사용
+    robots_lock = threading.Lock()
+    robots_holder = {
+        "robots": create_robots(
+            args.robots,
+            issues
+        )
+    }
+
+    client = mqtt.Client(
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        client_id=f"robot-sim-{random.randint(1000, 9999)}"
     )
+
+    command_topic = (
+        f"factory/{args.site}/robot/+/command"
+    )
+
+    def on_connect(client, userdata, flags, reason_code, properties):
+        if reason_code == 0:
+            client.subscribe(command_topic, qos=args.qos)
+            print(
+                f"[MQTT] subscribed command topic: {command_topic}"
+            )
+        else:
+            print(
+                f"[MQTT] connection failed: {reason_code}"
+            )
+
+    def on_message(client, userdata, msg):
+        try:
+            payload = json.loads(
+                msg.payload.decode("utf-8")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exception:
+            print(
+                "[COMMAND] invalid payload:",
+                exception
+            )
+            return
+
+        command = str(
+            payload.get("command", "")
+        ).upper()
+
+        if command != COMMAND_CLEAR_EVENT:
+            print(
+                f"[COMMAND] ignored command: {command}"
+            )
+            return
+
+        parts = msg.topic.split("/")
+
+        # factory/{site}/robot/{deviceId}/command
+        if len(parts) < 5:
+            print(
+                f"[COMMAND] invalid topic: {msg.topic}"
+            )
+            return
+
+        device_id = parts[3]
+        event_type = payload.get("eventType")
+
+        with robots_lock:
+            robot = next(
+                (
+                    robot
+                    for robot in robots_holder["robots"]
+                    if robot["id"] == device_id
+                ),
+                None
+            )
+
+            if robot is None:
+                print(
+                    f"[COMMAND] robot not found: {device_id}"
+                )
+                return
+
+            clear_event(
+                robot,
+                event_type
+            )
+
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    client.connect(
+        args.host,
+        args.port,
+        keepalive=60
+    )
+
+    client.loop_start()
 
     interval = 1 / max(
         args.rate,
@@ -302,9 +415,7 @@ def main():
     previous_status = None
 
     try:
-
         while True:
-
             try:
                 status = redis_client.get(
                     DEMO_STATUS_KEY
@@ -319,19 +430,20 @@ def main():
                 continue
 
             # STOPPED / None -> RUNNING 진입 순간
+            # 새 데모 세션이므로 모든 로봇/장애 시나리오를 다시 생성
             if (
                 status == DEMO_RUNNING
                 and previous_status != DEMO_RUNNING
             ):
-
                 print(
                     "[DEMO] simulation started"
                 )
 
-                robots = create_robots(
-                    args.robots,
-                    issues
-                )
+                with robots_lock:
+                    robots_holder["robots"] = create_robots(
+                        args.robots,
+                        issues
+                    )
 
                 print(
                     "[DEMO] robot state initialized"
@@ -348,111 +460,110 @@ def main():
 
             previous_status = status
 
-            # 데모 실행 중이 아니면 MQTT 발행 안 함
+            # 데모 실행 중이 아니면 MQTT telemetry 발행 안 함.
+            # 따라서 DEMO STOP 이후에는 새 이벤트도 발생하지 않음.
             if status != DEMO_RUNNING:
                 time.sleep(1)
                 continue
 
             start = time.time()
 
-            for robot in robots:
+            with robots_lock:
+                for robot in robots_holder["robots"]:
+                    # 5% 확률로 mission 변경
+                    if random.random() < 0.05:
+                        robot["mission"] = random.choices(
+                            [
+                                "IDLE",
+                                "MOVE",
+                                "PICK",
+                                "PACK",
+                                "CHARGE",
+                                "DONE"
+                            ],
+                            weights=[
+                                1,
+                                30,
+                                30,
+                                20,
+                                10,
+                                9
+                            ],
+                            k=1
+                        )[0]
 
-                # 5% 확률로 mission 변경
-                if random.random() < 0.05:
-                    robot["mission"] = random.choices(
-                        [
-                            "IDLE",
-                            "MOVE",
-                            "PICK",
-                            "PACK",
-                            "CHARGE",
-                            "DONE"
-                        ],
-                        weights=[
-                            1,
-                            30,
-                            30,
-                            20,
-                            10,
-                            9
-                        ],
-                        k=1
-                    )[0]
+                    # OFFLINE 테스트
+                    # offline_after 시간이 지나면 telemetry 발행 중지
+                    if (
+                        robot["issue"] == "OFFLINE"
+                        and time.time()
+                        >= robot["offline_after"]
+                    ):
+                        robot["online"] = False
+                        continue
 
-                # OFFLINE 테스트
-                #
-                # offline_after 시간이 지나면
-                # 더 이상 MQTT를 발행하지 않음
-                if (
-                    robot["issue"] == "OFFLINE"
-                    and time.time()
-                    >= robot["offline_after"]
-                ):
-                    robot["online"] = False
-                    continue
+                    robot["seq"] += 1
 
-                robot["seq"] += 1
-
-                robot["theta"] += random.uniform(
-                    -0.2,
-                    0.2
-                )
-
-                robot["x"] = clamp(
-                    robot["x"]
-                    + math.cos(robot["theta"])
-                    * random.uniform(0, 0.4),
-                    0,
-                    30
-                )
-
-                robot["y"] = clamp(
-                    robot["y"]
-                    + math.sin(robot["theta"])
-                    * random.uniform(0, 0.4),
-                    0,
-                    20
-                )
-
-                # LOW_BATTERY 로봇 제외
-                # 일반 로봇은 배터리 천천히 감소
-                if robot["issue"] != "LOW_BATTERY":
-                    robot["battery"] = clamp(
-                        robot["battery"]
-                        - random.uniform(0, 0.001),
-                        0,
-                        100
+                    robot["theta"] += random.uniform(
+                        -0.2,
+                        0.2
                     )
 
-                (
-                    obstacle,
-                    error,
-                    estop,
-                    speed,
-                    cpu
-                ) = apply_issue(robot)
+                    robot["x"] = clamp(
+                        robot["x"]
+                        + math.cos(robot["theta"])
+                        * random.uniform(0, 0.4),
+                        0,
+                        30
+                    )
 
-                payload = make_payload(
-                    robot,
-                    obstacle,
-                    error,
-                    estop,
-                    speed,
-                    cpu
-                )
+                    robot["y"] = clamp(
+                        robot["y"]
+                        + math.sin(robot["theta"])
+                        * random.uniform(0, 0.4),
+                        0,
+                        20
+                    )
 
-                topic = (
-                    f"factory/{args.site}"
-                    f"/robot/{robot['id']}"
-                    "/telemetry"
-                )
+                    # LOW_BATTERY 로봇 제외
+                    # 일반 로봇은 배터리 천천히 감소
+                    if robot["issue"] != "LOW_BATTERY":
+                        robot["battery"] = clamp(
+                            robot["battery"]
+                            - random.uniform(0, 0.001),
+                            0,
+                            100
+                        )
 
-                client.publish(
-                    topic,
-                    json.dumps(payload),
-                    qos=args.qos,
-                    retain=False
-                )
+                    (
+                        obstacle,
+                        error,
+                        estop,
+                        speed,
+                        cpu
+                    ) = apply_issue(robot)
+
+                    payload = make_payload(
+                        robot,
+                        obstacle,
+                        error,
+                        estop,
+                        speed,
+                        cpu
+                    )
+
+                    topic = (
+                        f"factory/{args.site}"
+                        f"/robot/{robot['id']}"
+                        "/telemetry"
+                    )
+
+                    client.publish(
+                        topic,
+                        json.dumps(payload),
+                        qos=args.qos,
+                        retain=False
+                    )
 
             elapsed = (
                 time.time()
@@ -472,7 +583,6 @@ def main():
         )
 
     finally:
-
         client.loop_stop()
         client.disconnect()
 

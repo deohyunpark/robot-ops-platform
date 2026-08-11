@@ -1,14 +1,19 @@
 package com.example.robotops.domain.repository;
 
+import static com.example.robotops.domain.entity.QActionCheckList.actionCheckList;
+import static com.example.robotops.domain.entity.QActionChecklistItem.actionChecklistItem;
 import static com.example.robotops.domain.entity.QDeviceEvent.deviceEvent;
+import static com.example.robotops.domain.entity.QEventAction.eventAction;
 import static org.springframework.util.StringUtils.hasText;
 
-import com.example.robotops.domain.deviceStateType.EventStatus;
-import com.example.robotops.domain.deviceStateType.EventType;
-import com.example.robotops.domain.deviceStateType.Severity;
 import com.example.robotops.domain.entity.DeviceEvent;
+import com.example.robotops.domain.enums.EventStatus;
+import com.example.robotops.domain.enums.EventType;
+import com.example.robotops.domain.enums.Severity;
 import com.example.robotops.domain.response.DeviceEventResponse;
 import com.querydsl.core.types.dsl.BooleanExpression;
+import com.querydsl.core.types.dsl.CaseBuilder;
+import com.querydsl.core.types.dsl.NumberExpression;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -144,6 +149,60 @@ public class DeviceEventRepositoryCustomImpl implements DeviceEventRepositoryCus
                 .fetch();
 
         return deviceEvents.stream().map(DeviceEventResponse::of).toList();
+    }
+
+    @Override
+    public List<DeviceEventResponse> findOfflineEvents(OffsetDateTime from, OffsetDateTime to) {
+        List<DeviceEvent> eventList = queryFactory.selectFrom(deviceEvent)
+                .where(
+                        eventTypeEq(EventType.OFFLINE),
+                        unresolved(),
+                        createdAtGoe(from),
+                        createdAtLt(to)
+                )
+                .fetch();
+
+        return eventList.stream().map(DeviceEventResponse::of).toList();
+    }
+
+    @Override
+    public Optional<DeviceEvent> findHighestPriorityOpenEvent(String deviceId) {
+
+        // 우선도
+        NumberExpression<Integer> severityPriority =
+                new CaseBuilder()
+                        .when(deviceEvent.severity.eq(Severity.CRITICAL))
+                        .then(1)
+                        .when(deviceEvent.severity.eq(Severity.WARNING))
+                        .then(2)
+                        .otherwise(3);
+
+        DeviceEvent result =
+                queryFactory
+                        .selectFrom(deviceEvent)
+                        .where(
+                                deviceEvent.deviceId.eq(deviceId),
+                                deviceEvent.eventStatus.eq(EventStatus.OPEN)
+                        )
+                        .orderBy(
+                                severityPriority.asc(),
+                                deviceEvent.createdAt.desc()
+                        )
+                        .fetchFirst();
+
+        return Optional.ofNullable(result);
+    }
+
+    @Override
+    public Optional<DeviceEvent> findByIdWithAction(Long eventId) {
+        DeviceEvent event = queryFactory.selectFrom(deviceEvent)
+                .leftJoin(deviceEvent.eventAction, eventAction).fetchJoin()
+                .leftJoin(eventAction.actionCheckList, actionCheckList).fetchJoin()
+                .leftJoin(actionCheckList.items, actionChecklistItem).fetchJoin()
+                .where(deviceEvent.id.eq(eventId))
+                .fetchOne();
+
+        return Optional.ofNullable(event);
     }
 
 

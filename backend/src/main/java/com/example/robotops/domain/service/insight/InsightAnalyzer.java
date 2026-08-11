@@ -32,8 +32,6 @@ public class InsightAnalyzer {
         // 생성된 AiAnalysis List kafka
 
         return InsightFeedResponse.of(eventContext.tp().robotId(), requests, DeviceRiskResponse.from(calculated));
-        // todo: InsightHandler 에서 온 AiAnalysis 를 계산 후 Insight Publisher Insight DB 저장, Redis 저장, Websocket 발행
-        // 웹소켓은 합쳐ㅓ 발행 -? gpt한테
 
 
     }

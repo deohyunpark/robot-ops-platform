@@ -1,7 +1,7 @@
 package com.example.robotops.domain.request;
 
-import com.example.robotops.domain.deviceStateType.EventType;
-import com.example.robotops.domain.deviceStateType.Severity;
+import com.example.robotops.domain.enums.EventType;
+import com.example.robotops.domain.enums.Severity;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import io.micrometer.common.lang.Nullable;
 import java.time.OffsetDateTime;

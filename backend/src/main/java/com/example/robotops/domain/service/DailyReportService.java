@@ -11,6 +11,7 @@ import com.example.robotops.domain.response.ReportOverview;
 import com.example.robotops.domain.response.ReportStatistics;
 import com.example.robotops.domain.response.ThroughputResponse;
 import com.example.robotops.domain.response.UtilizationResponse;
+import com.example.robotops.domain.service.event.EventHandler;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -28,6 +29,7 @@ public class DailyReportService {
     private final DeviceStateService deviceStateService;
     private final DeviceEventService deviceEventService;
     private final DashBoardService dashBoardService;
+    private final EventHandler offlineHandler;
 
     public DailyReportResponse createDailyReport() {
 
@@ -40,7 +42,7 @@ public class DailyReportService {
                 OffsetDateTime.now();
 
         // KPI 카드 요약
-        ReportOverview overview = getOverview();
+        ReportOverview overview = getOverview(from, to);
 
         final ThroughputResponse throughput = dashBoardService.getThroughput();
         List<UtilizationResponse> utilizations = dashBoardService.getUtilization();
@@ -67,7 +69,7 @@ public class DailyReportService {
 
     }
 
-    private ReportOverview getOverview() {
+    private ReportOverview getOverview(OffsetDateTime from, OffsetDateTime to) {
 
         List<RedisEventResponse> events =
                 deviceEventService.getAllDeviceEvents();
@@ -78,13 +80,11 @@ public class DailyReportService {
         // total
         int total = devices.size();
 
-        // online
-        int online = (int) devices.stream()
-                .filter(DeviceStateResponse::online)
-                .count();
-
         // offline
-        int offline = total - online;
+        int offline = deviceEventService.findOfflineEvents(from, to).size();
+
+        // online
+        int online = total - offline;
 
         // critical
         int critical = Math.toIntExact(
@@ -98,7 +98,7 @@ public class DailyReportService {
                         .filter(d -> Objects.equals(d.severity(), "WARNING"))
                         .count());
 
-        return ReportOverview.of(total, offline, online, warning, critical);
+        return ReportOverview.of(total, online, offline, warning, critical);
     }
 
     private List<DeviceEventResponse> getTodayEvents(OffsetDateTime from, OffsetDateTime to) {

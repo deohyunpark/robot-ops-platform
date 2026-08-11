@@ -1,9 +1,11 @@
 package com.example.robotops.domain.service;
 
 import com.example.robotops.domain.entity.AiAnalysis;
+import com.example.robotops.domain.entity.DeviceEvent;
 import com.example.robotops.domain.repository.AiAnalysisRepository;
 import com.example.robotops.domain.repository.DeviceEventRepository;
 import com.example.robotops.domain.repository.DeviceStateRepository;
+import com.example.robotops.domain.response.DeviceEventResponse;
 import com.example.robotops.domain.response.PriorityDeviceResponse;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
@@ -46,25 +48,34 @@ public class DevicePriorityService {
                         .findLatestOpenEventAt(deviceId)
                         .orElse(null);
 
-        // 최근 분석한 openAI 결과
-        AiAnalysis latestAnalysis =
-                aiAnalysisRepository
-                        .findTopByRobotIdOrderByCreatedAtDesc(deviceId)
+        // 해결되지 않은 이벤트중 위험도 높은 이벤트
+        DeviceEvent primaryOpenEvent =
+                deviceEventRepository
+                        .findHighestPriorityOpenEvent(deviceId)
                         .orElse(null);
 
+        DeviceEventResponse deviceEventResponse = primaryOpenEvent == null
+                ? null
+                : DeviceEventResponse.of(primaryOpenEvent);
+
+        // insight 중 위험도 높은 insight
+        AiAnalysis aiAnalysis = aiAnalysisRepository.findHighestPriorityAiAnalysis(deviceId)
+                .orElse(null);
+
         int riskScore =
-                latestAnalysis == null
+                aiAnalysis == null
                         ? 0
-                        : latestAnalysis.getRiskScore();
+                        : aiAnalysis.getRiskScore();
 
         String riskLevel =
-                latestAnalysis == null
+                aiAnalysis == null
                         ? "NONE"
-                        : latestAnalysis.getRiskLevel();
+                        : aiAnalysis.getRiskLevel();
 
         return PriorityDeviceResponse.of(
                 deviceId,
                 hasOpenCritical,
+                deviceEventResponse,
                 riskScore,
                 riskLevel,
                 latestEventAt

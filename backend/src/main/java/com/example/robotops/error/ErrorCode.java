@@ -22,6 +22,27 @@ public enum ErrorCode {
             false
     ),
 
+    MQTT_NOT_CONNECTED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "MQTT_002",
+            "MQTT 브로커에 연결되어 있지 않습니다.",
+            false
+    ),
+
+    MQTT_PUBLISH_FAILED(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "MQTT_003",
+            "MQTT 메시지 발행에 실패했습니다.",
+            false
+    ),
+
+    MQTT_CONNECTION_FAILED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "MQTT_004",
+            "MQTT 브로커 연결에 실패했습니다.",
+            false
+    ),
+
     KAFKA_PUBLISH_FAILED(
             HttpStatus.SERVICE_UNAVAILABLE,
             "KAFKA_001",
@@ -57,6 +78,20 @@ public enum ErrorCode {
             true
     ),
 
+    EVENT_TYPE_NOT_FOUND(
+            HttpStatus.BAD_REQUEST,
+            "EVENT_002",
+            "존재하지 않는 이벤트 타입입니다.",
+            false
+    ),
+
+    EVENT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "EVENT_003",
+            "이벤트를 찾을 수 없습니다.",
+            false
+    ),
+
     MESSAGE_SERIALIZATION_FAILED(
             HttpStatus.INTERNAL_SERVER_ERROR,
             "MSG_001",
@@ -89,7 +124,20 @@ public enum ErrorCode {
             HttpStatus.SERVICE_UNAVAILABLE,
             "PDF_GENERATE_001",
             "PDF 발행에 실패했습니다.",
-            false);
+            false
+    ),
+    INVALID_EVENT_STATUS(
+            HttpStatus.CONFLICT,
+            "INVALID_EVENT_STATUS_001",
+            "현재 이벤트 상태에서는 해당 작업을 수행할 수 없습니다",
+            false),
+
+    EVENT_ACTION_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "EVENT_ACTION_001",
+            "이벤트액션을 찾을 수 없습니다.",
+            false
+    );
 
     private final HttpStatus status;
     private final String code;

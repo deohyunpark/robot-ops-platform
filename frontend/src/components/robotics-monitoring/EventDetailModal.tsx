@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Badge, BatteryGauge, MetricCard } from "./DashboardParts"
 import type { Device } from "./roboticsMonitoringDashboardTypes"
 import type { BackendDeviceEvent, DeviceEventFeedRow } from "./telemetryAdapter"
+import { isBackendEventResolved } from "./telemetryAdapter"
 import {
+  ASSIGNEE_OPTIONS,
   buildMissionTimeline,
+  checklistProgress,
   findMatchingBackendEvent,
   formatEventDurationLabel,
   formatEventPayloadMessage,
@@ -42,8 +45,11 @@ export type EventDetailModalProps = {
   bodyFont: RoboticsDashboardFont
   monoFont: RoboticsDashboardFont
   onClose: () => void
-  onAck: (assignee: string) => void
-  onResolve: (description: string) => void
+  onAssigneeChange: (assignee: string) => void
+  onChecklistToggle: (itemId: string, checked: boolean) => void
+  onDraftSave: (resolutionDescription: string) => Promise<void>
+  onAck: () => Promise<void>
+  onResolve: (description: string) => Promise<void>
   onViewDevice: () => void
 }
 
@@ -83,23 +89,34 @@ export function EventDetailModal(props: EventDetailModalProps) {
     bodyFont,
     monoFont,
     onClose,
+    onAssigneeChange,
+    onChecklistToggle,
+    onDraftSave,
     onAck,
     onResolve,
     onViewDevice,
   } = props
 
   const ko = language === "ko"
-  const [assigneeInput, setAssigneeInput] = useState("")
   const [resolutionInput, setResolutionInput] = useState("")
   const [durationTick, setDurationTick] = useState(0)
+  const [ackSubmitting, setAckSubmitting] = useState(false)
+  const [ackError, setAckError] = useState<string | null>(null)
+  const [draftSubmitting, setDraftSubmitting] = useState(false)
+  const [resolveSubmitting, setResolveSubmitting] = useState(false)
+  const [workflowError, setWorkflowError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
-    setAssigneeInput(ack.assignee || "")
     setResolutionInput(ack.resolutionDescription || "")
+    setAckError(null)
+    setWorkflowError(null)
+    setAckSubmitting(false)
+    setDraftSubmitting(false)
+    setResolveSubmitting(false)
     const id = window.setInterval(() => setDurationTick((t) => t + 1), 30_000)
     return () => window.clearInterval(id)
-  }, [open, ack.assignee, ack.resolutionDescription])
+  }, [open, ack.resolutionDescription])
 
   const backendEvent = useMemo(() => {
     if (!event) return null
@@ -124,12 +141,26 @@ export function EventDetailModal(props: EventDetailModalProps) {
   const durationLabel = useMemo(() => {
     if (!event) return "-"
     void durationTick
+    const resolvedAt =
+      ack.resolvedAt ||
+      (isBackendEventResolved(backendEvent) ? backendEvent?.resolvedAt : undefined)
     return formatEventDurationLabel(
       event.eventType,
       event.ts,
-      ack.resolved ? ack.resolvedAt : undefined
+      ack.resolved || isBackendEventResolved(backendEvent)
+        ? resolvedAt || undefined
+        : undefined
     )
-  }, [event, ack.resolved, ack.resolvedAt, durationTick])
+  }, [event, ack.resolved, ack.resolvedAt, backendEvent, durationTick])
+
+  const checklistStats = useMemo(
+    () => checklistProgress(ack.checklist),
+    [ack.checklist]
+  )
+
+  const isResolvedEvent =
+    ack.resolved || isBackendEventResolved(backendEvent)
+  const workflowLocked = isResolvedEvent
 
   if (!open || !event) return null
 
@@ -201,7 +232,7 @@ export function EventDetailModal(props: EventDetailModalProps) {
                 background: sevColor,
                 boxShadow: `0 0 12px ${withAlpha(sevColor, 0.8)}`,
                 flexShrink: 0,
-                animation: ack.resolved ? "none" : "rm-pulse 1.8s ease-in-out infinite",
+                animation: isResolvedEvent ? "none" : "rm-pulse 1.8s ease-in-out infinite",
               }}
             />
             <div style={{ minWidth: 0 }}>
@@ -262,7 +293,7 @@ export function EventDetailModal(props: EventDetailModalProps) {
             >
               <StatusCell label={ko ? "장비 ID" : "Device ID"} value={event.deviceId} monoFont={monoFont} textPrimary={textPrimary} textSecondary={textSecondary} />
               <StatusCell label={ko ? "이벤트 유형" : "Event Type"} value={event.eventType} monoFont={monoFont} textPrimary={textPrimary} textSecondary={textSecondary} highlight={sevColor} />
-              <StatusCell label="Severity" value={event.severity} monoFont={monoFont} textPrimary={textPrimary} textSecondary={textSecondary} highlight={sevColor} />
+              <StatusCell label={ko ? "위험도" : "Risk level"} value={event.severity} monoFont={monoFont} textPrimary={textPrimary} textSecondary={textSecondary} highlight={sevColor} />
               <StatusCell label={ko ? "발생 시간" : "Created"} value={formatKoreanDateTime(event.ts)} monoFont={monoFont} textPrimary={textPrimary} textSecondary={textSecondary} />
               <StatusCell label={ko ? "현재 Mission/State" : "Current State"} value={currentMission} monoFont={monoFont} textPrimary={textPrimary} textSecondary={textSecondary} />
               <StatusCell
@@ -295,11 +326,11 @@ export function EventDetailModal(props: EventDetailModalProps) {
                 style={{
                   ...monoFont,
                   fontSize: coerceFontSize(monoFont?.fontSize, 15),
-                  color: ack.resolved ? statusOnline : sevColor,
+                  color: workflowLocked ? statusOnline : sevColor,
                   fontWeight: 600,
                 }}
               >
-                {ack.resolved
+                {workflowLocked
                   ? ko
                     ? `해결됨 · ${durationLabel}`
                     : `Resolved · ${durationLabel}`
@@ -439,9 +470,7 @@ export function EventDetailModal(props: EventDetailModalProps) {
                   </div>
                 ) : null}
               </Panel>
-            </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
               <Panel title={ko ? "실시간 장비 상태" : "Live telemetry"} borderColor={borderColor} cardBackground={cardBackground} headingFont={headingFont} textPrimary={textPrimary}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <MetricCard
@@ -521,7 +550,9 @@ export function EventDetailModal(props: EventDetailModalProps) {
                   {(device?.posY ?? 0).toFixed(2)}
                 </div>
               </Panel>
+            </div>
 
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
               <Panel title={ko ? "조치 상태 (ACK)" : "Acknowledgement"} borderColor={borderColor} cardBackground={cardBackground} headingFont={headingFont} textPrimary={textPrimary}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <AckRow
@@ -556,129 +587,407 @@ export function EventDetailModal(props: EventDetailModalProps) {
                   <AckRow
                     label={ko ? "해결 완료" : "Resolved"}
                     value={
-                      ack.resolved
+                      workflowLocked
                         ? ko
-                          ? `완료 (${formatKoreanDateTime(ack.resolvedAt)})`
-                          : `Yes (${formatKoreanDateTime(ack.resolvedAt)})`
+                          ? `완료 (${formatKoreanDateTime(
+                              ack.resolvedAt || backendEvent?.resolvedAt || ""
+                            )})`
+                          : `Yes (${formatKoreanDateTime(
+                              ack.resolvedAt || backendEvent?.resolvedAt || ""
+                            )})`
                         : ko
                           ? "진행 중"
                           : "Open"
                     }
-                    color={ack.resolved ? statusOnline : statusError}
+                    color={workflowLocked ? statusOnline : statusError}
                     monoFont={monoFont}
                     textSecondary={textSecondary}
                   />
-                  {ack.resolved && ack.resolutionDescription.trim() ? (
-                    <div
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        background: withAlpha(statusOnline, 0.08),
-                        border: `1px solid ${withAlpha(statusOnline, 0.22)}`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          ...monoFont,
-                          fontSize: 11,
-                          color: textSecondary,
-                          marginBottom: 6,
-                        }}
-                      >
-                        {ko ? "조치 내용" : "Resolution notes"}
-                      </div>
-                      <div
-                        style={{
-                          ...bodyFont,
-                          fontSize: 14,
-                          lineHeight: 1.5,
-                          color: textPrimary,
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {ack.resolutionDescription}
-                      </div>
-                    </div>
-                  ) : null}
 
-                  {!ack.resolved ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
-                      {!ack.acknowledged ? (
-                        <>
-                          <input
-                            value={assigneeInput}
-                            onChange={(e) => setAssigneeInput(e.target.value)}
-                            placeholder={ko ? "담당자 이름 입력" : "Assignee name"}
-                            style={{
-                              border: `1px solid ${borderColor}`,
-                              background: withAlpha(background, 0.4),
-                              color: textPrimary,
-                              borderRadius: 10,
-                              padding: "10px 12px",
-                              outline: "none",
-                              ...bodyFont,
-                              fontSize: 14,
-                            }}
-                          />
+                  {!workflowLocked ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 4 }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div
+                          style={{
+                            ...monoFont,
+                            fontSize: 11,
+                            color: textSecondary,
+                          }}
+                        >
+                          {ko ? "조치 담당자" : "Assignee"}
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {ASSIGNEE_OPTIONS.map((name) => {
+                            const selected = ack.assignee === name
+                            return (
+                              <button
+                                key={name}
+                                type="button"
+                                onClick={() => onAssigneeChange(name)}
+                                disabled={ack.acknowledged}
+                                aria-pressed={selected}
+                                style={{
+                                  border: `1px solid ${selected ? withAlpha(accent, 0.55) : borderColor}`,
+                                  background: selected
+                                    ? withAlpha(accent, 0.18)
+                                    : withAlpha(cardBackground, 0.65),
+                                  color: selected ? accent : textPrimary,
+                                  borderRadius: 999,
+                                  padding: "8px 12px",
+                                  cursor: ack.acknowledged ? "default" : "pointer",
+                                  opacity: ack.acknowledged && !selected ? 0.45 : 1,
+                                  ...monoFont,
+                                  fontSize: coerceFontSize(monoFont?.fontSize, 12),
+                                  fontWeight: selected ? 700 : 500,
+                                }}
+                              >
+                                {name}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      {ack.assignee && !ack.acknowledged ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {ackError ? (
+                            <div
+                              style={{
+                                ...bodyFont,
+                                fontSize: coerceFontSize(bodyFont?.fontSize, 13),
+                                color: statusError,
+                              }}
+                            >
+                              {ackError}
+                            </div>
+                          ) : null}
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button
                               type="button"
-                              disabled={!assigneeInput.trim()}
-                              onClick={() => onAck(assigneeInput.trim())}
+                              disabled={ackSubmitting}
+                              onClick={() => {
+                                void (async () => {
+                                  setAckSubmitting(true)
+                                  setAckError(null)
+                                  try {
+                                    await onAck()
+                                  } catch (e) {
+                                    setAckError(
+                                      e instanceof Error
+                                        ? e.message
+                                        : ko
+                                          ? "ACK 확인에 실패했습니다."
+                                          : "Failed to acknowledge event."
+                                    )
+                                  } finally {
+                                    setAckSubmitting(false)
+                                  }
+                                })()
+                              }}
                               style={primaryBtnStyle(
                                 accent,
                                 textPrimary,
                                 monoFont,
-                                !assigneeInput.trim()
+                                ackSubmitting
                               )}
                             >
-                              {ko ? "ACK 확인" : "Acknowledge"}
+                              {ackSubmitting
+                                ? ko
+                                  ? "ACK 처리 중…"
+                                  : "Acknowledging…"
+                                : ko
+                                  ? "ACK 확인"
+                                  : "Acknowledge"}
                             </button>
                           </div>
-                        </>
-                      ) : (
-                        <>
-                          <textarea
-                            value={resolutionInput}
-                            onChange={(e) => setResolutionInput(e.target.value)}
-                            placeholder={
-                              ko
-                                ? "조치 내용을 입력하세요 (필수)"
-                                : "Describe the action taken (required)"
-                            }
-                            rows={4}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {ack.acknowledged && ack.checklist.length > 0 ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        marginTop: 4,
+                        opacity: workflowLocked ? 0.78 : 1,
+                        filter: workflowLocked ? "saturate(0.82)" : undefined,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 10,
+                        }}
+                      >
+                        <span
+                          style={{
+                            ...monoFont,
+                            fontSize: 11,
+                            color: textSecondary,
+                          }}
+                        >
+                          {ko ? "조치 체크리스트" : "Action checklist"}
+                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {workflowLocked ? (
+                            <span
+                              style={{
+                                ...monoFont,
+                                fontSize: 10,
+                                color: statusOnline,
+                                padding: "3px 8px",
+                                borderRadius: 999,
+                                border: `1px solid ${withAlpha(statusOnline, 0.28)}`,
+                                background: withAlpha(statusOnline, 0.1),
+                                fontWeight: 700,
+                              }}
+                            >
+                              {ko ? "완료됨" : "Completed"}
+                            </span>
+                          ) : null}
+                          <span
                             style={{
-                              border: `1px solid ${borderColor}`,
-                              background: withAlpha(background, 0.4),
-                              color: textPrimary,
-                              borderRadius: 10,
-                              padding: "10px 12px",
-                              outline: "none",
-                              resize: "vertical",
-                              minHeight: 96,
-                              ...bodyFont,
-                              fontSize: 14,
-                              lineHeight: 1.5,
+                              ...monoFont,
+                              fontSize: 11,
+                              color: workflowLocked ? textSecondary : textPrimary,
+                              fontWeight: 600,
                             }}
-                          />
+                          >
+                            {checklistStats.checked}/{checklistStats.total} ({checklistStats.percent}
+                            %)
+                          </span>
+                        </div>
+                      </div>
+                      <div
+                        aria-hidden
+                        style={{
+                          height: 8,
+                          borderRadius: 999,
+                          background: withAlpha(borderColor, 0.55),
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${checklistStats.percent}%`,
+                            height: "100%",
+                            borderRadius: 999,
+                            background: workflowLocked
+                              ? withAlpha(statusOnline, 0.55)
+                              : checklistStats.percent >= 100
+                                ? statusOnline
+                                : checklistStats.percent >= 50
+                                  ? statusWarning
+                                  : accent,
+                            transition: "width 0.2s ease",
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {ack.checklist.map((item) => (
+                          <label
+                            key={item.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "flex-start",
+                              gap: 10,
+                              padding: "10px 12px",
+                              borderRadius: 10,
+                              border: `1px solid ${
+                                item.checked
+                                  ? withAlpha(statusOnline, workflowLocked ? 0.22 : 0.35)
+                                  : withAlpha(borderColor, workflowLocked ? 0.65 : 1)
+                              }`,
+                              background: item.checked
+                                ? withAlpha(statusOnline, workflowLocked ? 0.05 : 0.08)
+                                : withAlpha(background, workflowLocked ? 0.22 : 0.35),
+                              cursor: workflowLocked ? "default" : "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={item.checked}
+                              disabled={workflowLocked}
+                              onChange={(e) =>
+                                onChecklistToggle(item.id, e.target.checked)
+                              }
+                              style={{ marginTop: 2, accentColor: accent }}
+                            />
+                            <span
+                              style={{
+                                ...bodyFont,
+                                fontSize: coerceFontSize(bodyFont?.fontSize, 13),
+                                lineHeight: 1.45,
+                                color: item.checked
+                                  ? workflowLocked
+                                    ? textSecondary
+                                    : textPrimary
+                                  : textSecondary,
+                              }}
+                            >
+                              {item.label}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {ack.acknowledged ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        marginTop: 4,
+                        opacity: workflowLocked ? 0.78 : 1,
+                      }}
+                    >
+                      <textarea
+                        value={resolutionInput}
+                        onChange={(e) => setResolutionInput(e.target.value)}
+                        readOnly={workflowLocked}
+                        disabled={workflowLocked}
+                        placeholder={
+                          ko
+                            ? "조치 메모를 입력하세요 (임시저장 가능)"
+                            : "Action notes (can be saved as draft)"
+                        }
+                        rows={4}
+                        style={{
+                          border: `1px solid ${borderColor}`,
+                          background: withAlpha(background, workflowLocked ? 0.28 : 0.4),
+                          color: workflowLocked ? textSecondary : textPrimary,
+                          borderRadius: 10,
+                          padding: "10px 12px",
+                          outline: "none",
+                          resize: workflowLocked ? "none" : "vertical",
+                          minHeight: 96,
+                          cursor: workflowLocked ? "default" : "text",
+                          ...bodyFont,
+                          fontSize: 14,
+                          lineHeight: 1.5,
+                        }}
+                      />
+
+                      {!workflowLocked ? (
+                        <>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button
                               type="button"
-                              disabled={!resolutionInput.trim()}
-                              onClick={() => onResolve(resolutionInput.trim())}
+                              disabled={draftSubmitting || resolveSubmitting}
+                              onClick={() => {
+                                void (async () => {
+                                  setDraftSubmitting(true)
+                                  setWorkflowError(null)
+                                  try {
+                                    await onDraftSave(resolutionInput)
+                                  } catch (e) {
+                                    setWorkflowError(
+                                      e instanceof Error
+                                        ? e.message
+                                        : ko
+                                          ? "임시저장에 실패했습니다."
+                                          : "Failed to save draft."
+                                    )
+                                  } finally {
+                                    setDraftSubmitting(false)
+                                  }
+                                })()
+                              }}
+                              style={secondaryBtnStyle(
+                                borderColor,
+                                cardBackground,
+                                textPrimary,
+                                monoFont
+                              )}
+                            >
+                              {draftSubmitting
+                                ? ko
+                                  ? "저장 중…"
+                                  : "Saving…"
+                                : ko
+                                  ? "임시저장"
+                                  : "Save draft"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                draftSubmitting ||
+                                resolveSubmitting ||
+                                checklistStats.percent < 100 ||
+                                !resolutionInput.trim()
+                              }
+                              onClick={() => {
+                                void (async () => {
+                                  setResolveSubmitting(true)
+                                  setWorkflowError(null)
+                                  try {
+                                    await onResolve(resolutionInput.trim())
+                                  } catch (e) {
+                                    setWorkflowError(
+                                      e instanceof Error
+                                        ? e.message
+                                        : ko
+                                          ? "완료 처리에 실패했습니다."
+                                          : "Failed to resolve event."
+                                    )
+                                  } finally {
+                                    setResolveSubmitting(false)
+                                  }
+                                })()
+                              }}
                               style={primaryBtnStyle(
                                 statusOnline,
                                 textPrimary,
                                 monoFont,
-                                !resolutionInput.trim()
+                                draftSubmitting ||
+                                  resolveSubmitting ||
+                                  checklistStats.percent < 100 ||
+                                  !resolutionInput.trim()
                               )}
                             >
-                              {ko ? "해결 완료" : "Mark resolved"}
+                              {resolveSubmitting
+                                ? ko
+                                  ? "완료 처리 중…"
+                                  : "Resolving…"
+                                : ko
+                                  ? "해결 완료"
+                                  : "Mark resolved"}
                             </button>
                           </div>
+
+                          {workflowError ? (
+                            <div
+                              style={{
+                                ...monoFont,
+                                fontSize: 11,
+                                color: statusError,
+                              }}
+                            >
+                              {workflowError}
+                            </div>
+                          ) : null}
+
+                          {ack.draftSavedAt ? (
+                            <div
+                              style={{
+                                ...monoFont,
+                                fontSize: 11,
+                                color: textSecondary,
+                              }}
+                            >
+                              {ko ? "임시저장" : "Draft saved"}:{" "}
+                              {formatKoreanDateTime(ack.draftSavedAt)}
+                            </div>
+                          ) : null}
                         </>
-                      )}
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

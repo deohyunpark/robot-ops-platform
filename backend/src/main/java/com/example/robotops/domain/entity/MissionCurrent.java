@@ -1,7 +1,7 @@
 package com.example.robotops.domain.entity;
 
 import com.example.robotops.application.telemetry.request.payload.TelemetryPayload;
-import com.example.robotops.domain.deviceStateType.Mission;
+import com.example.robotops.domain.enums.Mission;
 import com.example.robotops.global.errorMessage.StringEnum;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

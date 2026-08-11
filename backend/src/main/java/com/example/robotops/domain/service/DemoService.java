@@ -1,9 +1,12 @@
-package com.example.robotops.domain.controller;
+package com.example.robotops.domain.service;
 
+import com.example.robotops.domain.repository.ActionCheckListItemRepository;
+import com.example.robotops.domain.repository.ActionCheckListRepository;
 import com.example.robotops.domain.repository.AiAnalysisInsightRepository;
 import com.example.robotops.domain.repository.AiAnalysisRepository;
 import com.example.robotops.domain.repository.DeviceEventRepository;
 import com.example.robotops.domain.repository.DeviceStateRepository;
+import com.example.robotops.domain.repository.EventActionRepository;
 import com.example.robotops.domain.response.DemoSessionResponse;
 import com.example.robotops.domain.response.DemoStatusResponse;
 import java.time.Duration;
@@ -32,6 +35,9 @@ public class DemoService {
     private final AiAnalysisRepository aiAnalysisRepository;
     private final DeviceStateRepository deviceStateRepository;
     private final AiAnalysisInsightRepository aiAnalysisInsightRepository;
+    private final EventActionRepository eventActionRepository;
+    private final ActionCheckListRepository actionCheckListRepository;
+    private final ActionCheckListItemRepository actionCheckListItemRepository;
 
     public DemoSessionResponse start(Duration duration) {
         Instant expiresAt = Instant.now().plus(duration);
@@ -96,6 +102,9 @@ public class DemoService {
     private void clearDatabase() {
         aiAnalysisInsightRepository.deleteAllInBatch();
         aiAnalysisRepository.deleteAllInBatch();
+        actionCheckListItemRepository.deleteAllInBatch();
+        actionCheckListRepository.deleteAllInBatch();
+        eventActionRepository.deleteAllInBatch();
         deviceEventRepository.deleteAllInBatch();
         deviceStateRepository.deleteAllInBatch();
     }

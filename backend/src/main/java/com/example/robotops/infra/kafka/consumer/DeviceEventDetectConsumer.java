@@ -19,6 +19,7 @@ public class DeviceEventDetectConsumer {
 
     @KafkaListener(topics = "robot.device.event.detected", groupId = "detected-event-processor")
     public void consume(String message) {
+
         deviceEventService.process(jsonUtil.fromJson(message, DeviceEvent.class));
     }
 

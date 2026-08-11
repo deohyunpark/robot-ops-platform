@@ -48,11 +48,23 @@ import {
 } from "./InsightFeedRobotHoverPopover"
 import { useDeviceTableRenderer } from "./DashboardDeviceTable"
 import {
+  ackStateFromActionResponse,
+  checklistSavePayload,
+  clearEventAckMap,
   defaultAckState,
   loadEventAckMap,
   saveEventAckMap,
+  normalizeAckState,
+  parseBackendEventId,
+  resolveAckBackendEvent,
   type EventDetailAckState,
 } from "./eventDetailUtils"
+import {
+  fetchEventAction,
+  postEventAck,
+  postEventResolve,
+  saveEventActionItems,
+} from "../../services/eventAction"
 import {
   Badge,
   BatteryGauge,
@@ -66,7 +78,6 @@ import type {
   RoboticsMonitoringDashboardProps,
 } from "./roboticsMonitoringDashboardTypes"
 import {
-  deviceEventFeedRowToBackendEvent,
   backendEventToFeedRow,
   deviceEventsFeedFromPayload,
   filterCriticalEventRows,
@@ -75,6 +86,7 @@ import {
   isDeviceEventsStompDestination,
   isInsightFeedPayload,
   isInsightFeedStompDestination,
+  isBackendEventResolved,
   mergeLatestFleetEventsByDevice,
   mergeInsightFeedItems,
   offlineEventBatchFromPayload,
@@ -106,7 +118,31 @@ import {
 
 const isStatic = false
 const DAISY_LOGO_SRC = "/daisy-logo.png?v=2"
-const DEMO_DURATION_MS = 10 * 60 * 1000
+const DEMO_RELOAD_SESSION_KEY = "rm-demo-reload"
+
+function readDemoReloadPending(): boolean {
+  try {
+    return sessionStorage.getItem(DEMO_RELOAD_SESSION_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function markDemoReloadPending() {
+  try {
+    sessionStorage.setItem(DEMO_RELOAD_SESSION_KEY, "1")
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearDemoReloadPending() {
+  try {
+    sessionStorage.removeItem(DEMO_RELOAD_SESSION_KEY)
+  } catch {
+    /* ignore */
+  }
+}
 
 function formatDemoRemaining(ms: number): string {
   const totalSec = Math.max(0, Math.ceil(ms / 1000))
@@ -368,7 +404,7 @@ export default function RoboticsMonitoringDashboard(
       },
     ]
   })
-  const search = ""
+  const [search, setSearch] = useState("")
   const [tick, setTick] = useState(0)
   const [liveDevices, setLiveDevices] = useState<Device[] | null>(null)
   const [deviceEvents, setDeviceEvents] = useState<Record<string, BackendDeviceEvent[]>>({})
@@ -382,7 +418,7 @@ export default function RoboticsMonitoringDashboard(
   const [wsConnected, setWsConnected] = useState(false)
   const [lastWsMessageAt, setLastWsMessageAt] = useState<string>("")
   const [demoBusy, setDemoBusy] = useState(false)
-  const [demoPageLoading, setDemoPageLoading] = useState(false)
+  const [demoPageLoading, setDemoPageLoading] = useState(() => readDemoReloadPending())
   const [demoStartError, setDemoStartError] = useState<string | null>(null)
   const [demoExpiresAt, setDemoExpiresAt] = useState<number | null>(null)
   const [demoNow, setDemoNow] = useState(() => Date.now())
@@ -409,43 +445,26 @@ export default function RoboticsMonitoringDashboard(
 
   const ingestFleetEventRows = useCallback((rows: DeviceEventFeedRow[]) => {
     if (!rows.length) return
-    const pinned = activeOutageDeviceIdsRef.current
-    const forDisplay = pinned.size
-      ? rows.filter((row) => !pinned.has(row.deviceId))
-      : rows
     startTransition(() => {
-      if (forDisplay.length) {
-        setLatestFleetEventsByDevice((prev) =>
-          mergeLatestFleetEventsByDevice(prev, forDisplay)
-        )
-        setLiveDevices((prev) => {
-          const byId = new Map((prev ?? []).map((d) => [d.id, d]))
-          for (const row of forDisplay) {
-            const patch = {
-              lastEventType: row.eventType,
-              lastEventSeverity: row.severity,
-            }
-            const old = byId.get(row.deviceId)
-            byId.set(
-              row.deviceId,
-              old
-                ? { ...old, ...patch }
-                : { ...fleetDeviceStub(row.deviceId, "Online"), ...patch }
-            )
-          }
-          return Array.from(byId.values())
-        })
-      }
-      setDeviceEvents((prev) => {
-        const next = { ...prev }
+      setLatestFleetEventsByDevice((prev) =>
+        mergeLatestFleetEventsByDevice(prev, rows)
+      )
+      setLiveDevices((prev) => {
+        const byId = new Map((prev ?? []).map((d) => [d.id, d]))
         for (const row of rows) {
-          const list = next[row.deviceId] ?? []
-          next[row.deviceId] = [
-            ...list,
-            deviceEventFeedRowToBackendEvent(row),
-          ].slice(-30)
+          const patch = {
+            lastEventType: row.eventType,
+            lastEventSeverity: row.severity,
+          }
+          const old = byId.get(row.deviceId)
+          byId.set(
+            row.deviceId,
+            old
+              ? { ...old, ...patch }
+              : { ...fleetDeviceStub(row.deviceId, "Online"), ...patch }
+          )
         }
-        return next
+        return Array.from(byId.values())
       })
     })
   }, [])
@@ -656,6 +675,17 @@ export default function RoboticsMonitoringDashboard(
   }, [])
 
   useEffect(() => {
+    if (!readDemoReloadPending()) return
+    clearDemoReloadPending()
+    demoAwaitingMqttRef.current = true
+    setDemoPageLoading(true)
+    startTransition(() => {
+      setBootstrapNonce((n) => n + 1)
+      setWsReconnectNonce((n) => n + 1)
+    })
+  }, [])
+
+  useEffect(() => {
     const ac = new AbortController()
     fetchDemoStatus(ac.signal)
       .then((status) => {
@@ -665,6 +695,102 @@ export default function RoboticsMonitoringDashboard(
       .catch(() => {})
     return () => ac.abort()
   }, [applyDemoStatus])
+
+  const refreshDashboardAfterDemoStop = useCallback(() => {
+    clearEventAckMap()
+    setEventAckByKey({})
+    setDashboardOutageEventRows([])
+    setLatestFleetEventsByDevice({})
+    setDeviceEvents({})
+    startTransition(() => {
+      setBootstrapNonce((n) => n + 1)
+      setWsReconnectNonce((n) => n + 1)
+    })
+  }, [])
+
+  /** 장애 resolve 후 Redis/API 기준으로 KPI·플릿·오프라인·디바이스 로그 재동기화 */
+  const refreshOutageDashboardData = useCallback(async (deviceId: string) => {
+    const id = deviceId.trim()
+    if (!id) return
+
+    const [allEventRows, offlineEvents, deviceEventRows] = await Promise.all([
+      fetchDashboardAllEvents().catch(() => [] as DeviceEventFeedRow[]),
+      fetchDashboardOffline().catch(() => [] as { deviceId: string }[]),
+      fetchDashboardDeviceEvents(id).catch(() => [] as BackendDeviceEvent[]),
+    ])
+
+    const offlineSet = new Set(
+      offlineEvents
+        .map((e) => e.deviceId)
+        .filter((rowId): rowId is string => Boolean(rowId))
+    )
+    const fleetEvents = mergeLatestFleetEventsByDevice({}, allEventRows)
+    const criticalRows = criticalOutageRows(allEventRows)
+    const now = new Date().toISOString()
+
+    startTransition(() => {
+      setWsOfflineDeviceIds(
+        Array.from(offlineSet).sort((a, b) => a.localeCompare(b))
+      )
+      setLatestFleetEventsByDevice(fleetEvents)
+      setDashboardOutageEventRows(criticalRows)
+      setDeviceEvents((prev) => ({
+        ...prev,
+        [id]: deviceEventRows,
+      }))
+      setLiveDevices((prev) => {
+        const byId = new Map((prev ?? []).map((d) => [d.id, d]))
+
+        for (const [rowId, device] of byId) {
+          if (device.status === "Offline" && !offlineSet.has(rowId)) {
+            byId.set(rowId, {
+              ...device,
+              status: "Online",
+              lastSeenMinutes: 0,
+              lastSeenAt: now,
+              updatedAt: now,
+            })
+          }
+        }
+
+        for (const rowId of offlineSet) {
+          const old = byId.get(rowId) ?? fleetDeviceStub(rowId, "Offline")
+          byId.set(rowId, {
+            ...old,
+            status: "Offline",
+            lastSeenMinutes: Math.max(old.lastSeenMinutes ?? 0, 1),
+            lastSeenAt: now,
+            updatedAt: now,
+          })
+        }
+
+        for (const row of Object.values(fleetEvents)) {
+          const old = byId.get(row.deviceId)
+          const patch = {
+            lastEventType: row.eventType,
+            lastEventSeverity: row.severity,
+          }
+          byId.set(
+            row.deviceId,
+            old
+              ? { ...old, ...patch }
+              : { ...fleetDeviceStub(row.deviceId, "Online"), ...patch }
+          )
+        }
+
+        const resolvedDevice = byId.get(id)
+        if (resolvedDevice && !fleetEvents[id]) {
+          byId.set(id, {
+            ...resolvedDevice,
+            lastEventType: undefined,
+            lastEventSeverity: undefined,
+          })
+        }
+
+        return Array.from(byId.values())
+      })
+    })
+  }, [])
 
   const handleDemoToggle = useCallback(async () => {
     if (demoBusy) return
@@ -677,27 +803,19 @@ export default function RoboticsMonitoringDashboard(
         demoAutoStopRef.current = false
         clearDemoPageLoading()
         setDemoExpiresAt(null)
+        refreshDashboardAfterDemoStop()
       } else {
         await postDemoStart()
-        demoAutoStopRef.current = false
-        demoAwaitingMqttRef.current = true
-        setDemoPageLoading(true)
-        startTransition(() => {
-          setBootstrapNonce((n) => n + 1)
-          setWsReconnectNonce((n) => n + 1)
-        })
-        try {
-          applyDemoStatus(await fetchDemoStatus())
-        } catch {
-          setDemoExpiresAt(Date.now() + DEMO_DURATION_MS)
-        }
+        markDemoReloadPending()
+        window.location.reload()
+        return
       }
     } catch (e) {
       setDemoStartError(e instanceof Error ? e.message : String(e))
     } finally {
       setDemoBusy(false)
     }
-  }, [applyDemoStatus, clearDemoPageLoading, demoBusy, demoExpiresAt])
+  }, [clearDemoPageLoading, demoBusy, demoExpiresAt, refreshDashboardAfterDemoStop])
 
   useEffect(() => {
     if (!demoPageLoading) return
@@ -715,13 +833,15 @@ export default function RoboticsMonitoringDashboard(
       if (now >= demoExpiresAt && !demoAutoStopRef.current) {
         demoAutoStopRef.current = true
         setDemoExpiresAt(null)
-        void postDemoStop().catch(() => {})
+        void postDemoStop()
+          .catch(() => {})
+          .finally(() => refreshDashboardAfterDemoStop())
       }
     }
     tick()
     const id = window.setInterval(tick, 1000)
     return () => window.clearInterval(id)
-  }, [demoExpiresAt])
+  }, [demoExpiresAt, refreshDashboardAfterDemoStop])
 
   const demoRunning = demoExpiresAt !== null && demoExpiresAt > demoNow
   const demoRemainingMs = demoRunning ? demoExpiresAt - demoNow : 0
@@ -925,6 +1045,7 @@ export default function RoboticsMonitoringDashboard(
       logType: ko ? "유형" : "Type",
       logTime: ko ? "시간" : "Time",
       logAction: ko ? "조치" : "Action",
+      logActionDone: ko ? "완료" : "Done",
       live: ko ? "실시간" : "Live",
       snapshot: ko ? "스냅샷" : "Snapshot",
       close: ko ? "닫기" : "Close",
@@ -1417,55 +1538,22 @@ export default function RoboticsMonitoringDashboard(
   const selectedEventAck = useMemo(() => {
     if (!selectedOutageEvent) return defaultAckState()
     const key = outageEventRowKey(selectedOutageEvent)
-    return { ...defaultAckState(), ...(eventAckByKey[key] ?? {}) }
+    return normalizeAckState(eventAckByKey[key])
   }, [selectedOutageEvent, eventAckByKey])
 
-  const handleEventAck = useCallback(
+  const handleEventAssigneeChange = useCallback(
     (assignee: string) => {
       if (!selectedOutageEvent) return
       const key = outageEventRowKey(selectedOutageEvent)
-      const now = new Date().toISOString()
       setEventAckByKey((prev) => {
-        const next = {
-          ...prev,
-          [key]: {
-            ...defaultAckState(),
-            ...(prev[key] ?? {}),
-            acknowledged: true,
-            assignee,
-            acknowledgedAt: now,
-            resolved: prev[key]?.resolved ?? false,
-            resolvedAt: prev[key]?.resolvedAt ?? "",
-            resolutionDescription: prev[key]?.resolutionDescription ?? "",
-          },
-        }
-        saveEventAckMap(next)
-        return next
-      })
-    },
-    [selectedOutageEvent]
-  )
-
-  const handleEventResolve = useCallback(
-    (description: string) => {
-      if (!selectedOutageEvent) return
-      const trimmed = description.trim()
-      if (!trimmed) return
-      const key = outageEventRowKey(selectedOutageEvent)
-      const now = new Date().toISOString()
-      setEventAckByKey((prev) => {
-        const existing = { ...defaultAckState(), ...(prev[key] ?? {}) }
-        if (!existing.acknowledged) return prev
+        const existing = normalizeAckState(prev[key])
+        if (existing.acknowledged) return prev
         const next = {
           ...prev,
           [key]: {
             ...existing,
-            acknowledged: true,
-            acknowledgedAt: existing.acknowledgedAt || now,
-            assignee: existing.assignee || "—",
-            resolved: true,
-            resolvedAt: now,
-            resolutionDescription: trimmed,
+            assignee,
+            checklist: [],
           },
         }
         saveEventAckMap(next)
@@ -1474,6 +1562,254 @@ export default function RoboticsMonitoringDashboard(
     },
     [selectedOutageEvent]
   )
+
+  const handleEventChecklistToggle = useCallback(
+    (itemId: string, checked: boolean) => {
+      if (!selectedOutageEvent) return
+      const key = outageEventRowKey(selectedOutageEvent)
+      setEventAckByKey((prev) => {
+        const existing = normalizeAckState(prev[key])
+        if (!existing.checklist.length) return prev
+        const next = {
+          ...prev,
+          [key]: {
+            ...existing,
+            checklist: existing.checklist.map((item) =>
+              item.id === itemId ? { ...item, checked } : item
+            ),
+          },
+        }
+        saveEventAckMap(next)
+        return next
+      })
+    },
+    [selectedOutageEvent]
+  )
+
+  const handleEventDraftSave = useCallback(
+    async (resolutionDescription: string) => {
+      if (!selectedOutageEvent) {
+        throw new Error("선택된 이벤트가 없습니다.")
+      }
+      const key = outageEventRowKey(selectedOutageEvent)
+      const existing = normalizeAckState(eventAckByKey[key])
+      if (!existing.acknowledged || !existing.assignee.trim()) {
+        throw new Error("ACK 확인 후 임시저장할 수 있습니다.")
+      }
+      if (!existing.eventActionId) {
+        throw new Error("조치 정보를 찾을 수 없습니다.")
+      }
+
+      await saveEventActionItems(
+        existing.eventActionId,
+        checklistSavePayload(existing.checklist, resolutionDescription)
+      )
+
+      const now = new Date().toISOString()
+      setEventAckByKey((prev) => {
+        const current = normalizeAckState(prev[key])
+        const next = {
+          ...prev,
+          [key]: {
+            ...current,
+            resolutionDescription: resolutionDescription.trim(),
+            draftSavedAt: now,
+          },
+        }
+        saveEventAckMap(next)
+        return next
+      })
+    },
+    [eventAckByKey, selectedOutageEvent]
+  )
+
+  const resolveSelectedBackendEventId = useCallback(
+    async (rows: BackendDeviceEvent[]) => {
+      if (!selectedOutageEvent) return null
+      let match = resolveAckBackendEvent(rows, selectedOutageEvent)
+      if (parseBackendEventId(match?.id ?? null)) {
+        return parseBackendEventId(match?.id ?? null)
+      }
+      const fresh = await fetchDashboardDeviceEvents(selectedOutageEvent.deviceId)
+      setDeviceEvents((prev) => ({
+        ...prev,
+        [selectedOutageEvent.deviceId]: fresh,
+      }))
+      match = resolveAckBackendEvent(fresh, selectedOutageEvent)
+      return parseBackendEventId(match?.id ?? null)
+    },
+    [selectedOutageEvent]
+  )
+
+  const handleEventAck = useCallback(async () => {
+    if (!selectedOutageEvent) {
+      throw new Error("선택된 이벤트가 없습니다.")
+    }
+    const key = outageEventRowKey(selectedOutageEvent)
+    const existing = normalizeAckState(eventAckByKey[key])
+    if (!existing.assignee.trim()) {
+      throw new Error("조치 담당자를 선택하세요.")
+    }
+
+    const backendRows = deviceEvents[selectedOutageEvent.deviceId] ?? []
+    const eventId = await resolveSelectedBackendEventId(backendRows)
+    if (!eventId) {
+      throw new Error("이벤트 ID를 찾을 수 없습니다.")
+    }
+
+    const ackResponse = await postEventAck({
+      eventId,
+      operator: existing.assignee.trim(),
+    })
+
+    setEventAckByKey((prev) => {
+      const current = normalizeAckState(prev[key])
+      const next = {
+        ...prev,
+        [key]: ackStateFromActionResponse(ackResponse, eventId, current),
+      }
+      saveEventAckMap(next)
+      return next
+    })
+  }, [
+    deviceEvents,
+    eventAckByKey,
+    resolveSelectedBackendEventId,
+    selectedOutageEvent,
+  ])
+
+  const handleEventResolve = useCallback(
+    async (description: string) => {
+      if (!selectedOutageEvent) {
+        throw new Error("선택된 이벤트가 없습니다.")
+      }
+      const trimmed = description.trim()
+      if (!trimmed) {
+        throw new Error("조치 메모를 입력하세요.")
+      }
+      const key = outageEventRowKey(selectedOutageEvent)
+      const existing = normalizeAckState(eventAckByKey[key])
+      if (!existing.acknowledged || !existing.assignee.trim()) {
+        throw new Error("ACK 확인 후 완료할 수 있습니다.")
+      }
+      if (!existing.eventActionId) {
+        throw new Error("조치 정보를 찾을 수 없습니다.")
+      }
+
+      const backendEventId =
+        existing.backendEventId ??
+        (await resolveSelectedBackendEventId(
+          deviceEvents[selectedOutageEvent.deviceId] ?? []
+        ))
+      if (!backendEventId) {
+        throw new Error("이벤트 ID를 찾을 수 없습니다.")
+      }
+
+      const checklist = existing.checklist.map((item) => ({ ...item, checked: true }))
+      await saveEventActionItems(
+        existing.eventActionId,
+        checklistSavePayload(checklist, trimmed)
+      )
+      await postEventResolve(backendEventId)
+
+      const now = new Date().toISOString()
+      const resolvedDeviceId = selectedOutageEvent.deviceId
+      setDashboardOutageEventRows((prev) =>
+        prev.filter((row) => outageEventRowKey(row) !== key)
+      )
+      setEventAckByKey((prev) => {
+        const current = normalizeAckState(prev[key])
+        const next = {
+          ...prev,
+          [key]: {
+            ...current,
+            acknowledged: true,
+            acknowledgedAt: current.acknowledgedAt || now,
+            backendEventId,
+            resolved: true,
+            resolvedAt: now,
+            resolutionDescription: trimmed,
+            draftSavedAt: "",
+            checklist,
+          },
+        }
+        saveEventAckMap(next)
+        return next
+      })
+
+      await refreshOutageDashboardData(resolvedDeviceId)
+    },
+    [
+      deviceEvents,
+      eventAckByKey,
+      refreshOutageDashboardData,
+      resolveSelectedBackendEventId,
+      selectedOutageEvent,
+    ]
+  )
+
+  useEffect(() => {
+    if (!eventDetailOpen || !selectedOutageEvent) return
+    const ac = new AbortController()
+    const key = outageEventRowKey(selectedOutageEvent)
+
+    ;(async () => {
+      try {
+        const events = await fetchDashboardDeviceEvents(
+          selectedOutageEvent.deviceId,
+          ac.signal
+        )
+        if (ac.signal.aborted) return
+        setDeviceEvents((prev) => ({
+          ...prev,
+          [selectedOutageEvent.deviceId]: events,
+        }))
+
+        const match = resolveAckBackendEvent(events, selectedOutageEvent)
+        const eventId = parseBackendEventId(match?.id ?? null)
+
+        if (isBackendEventResolved(match)) {
+          setEventAckByKey((prev) => {
+            const current = normalizeAckState(prev[key])
+            if (current.resolved && current.checklist.length) return prev
+            const next = {
+              ...prev,
+              [key]: {
+                ...current,
+                acknowledged: true,
+                resolved: true,
+                resolvedAt:
+                  match?.resolvedAt ??
+                  current.resolvedAt ??
+                  new Date().toISOString(),
+              },
+            }
+            saveEventAckMap(next)
+            return next
+          })
+        }
+
+        if (!eventId || ac.signal.aborted) return
+
+        const action = await fetchEventAction(eventId, ac.signal)
+        if (!action || ac.signal.aborted) return
+
+        setEventAckByKey((prev) => {
+          const current = normalizeAckState(prev[key])
+          const next = {
+            ...prev,
+            [key]: ackStateFromActionResponse(action, eventId, current),
+          }
+          saveEventAckMap(next)
+          return next
+        })
+      } catch {
+        /* ignore load errors */
+      }
+    })()
+
+    return () => ac.abort()
+  }, [eventDetailOpen, selectedOutageEvent])
 
   const closeModal = useCallback(() => {
     startTransition(() => setModalOpen(false))
@@ -1778,6 +2114,7 @@ export default function RoboticsMonitoringDashboard(
           t: ev.eventType ?? feedRow.eventType ?? "UNKNOWN",
           stamp,
           feedRow,
+          resolved: isBackendEventResolved(ev),
           sev:
             severity === "CRITICAL" || severity === "ERROR"
               ? ("error" as const)
@@ -2952,18 +3289,20 @@ export default function RoboticsMonitoringDashboard(
           <div
             style={{
               display: "flex",
-              alignItems: "baseline",
+              alignItems: "center",
               justifyContent: "space-between",
               gap: 10,
               padding: "0 2px",
+              flexWrap: isCompactLayout ? "wrap" : "nowrap",
             }}
           >
             <div
               style={{
                 display: "flex",
-                alignItems: "baseline",
+                alignItems: "center",
                 gap: 10,
                 minWidth: 0,
+                flexShrink: 0,
               }}
             >
               <div
@@ -2984,12 +3323,66 @@ export default function RoboticsMonitoringDashboard(
                   fontSize: coerceFontSize(monoFont?.fontSize, 12),
                   color: textSecondary,
                   whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
                 }}
               >
                 총 장비 {registeredFleetDevices.length}대
+                {search.trim()
+                  ? ` · ${ui.showing}${filteredDevices.length}${ui.of}${registeredFleetDevices.length}`
+                  : ""}
               </div>
+            </div>
+            <div
+              style={{
+                flex: isCompactLayout ? "1 1 100%" : "1 1 220px",
+                minWidth: isCompactLayout ? "100%" : 160,
+                maxWidth: isCompactLayout ? "100%" : 320,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={ui.searchPlaceholder}
+                aria-label={ui.searchPlaceholder}
+                autoComplete="off"
+                style={{
+                  width: "100%",
+                  border: `1px solid ${borderColor}`,
+                  background: cardBackground,
+                  color: textPrimary,
+                  borderRadius: 10,
+                  padding: "8px 10px",
+                  outline: "none",
+                  ...bodyFont,
+                  fontSize: isCompactLayout
+                    ? 16
+                    : coerceFontSize(bodyFont?.fontSize, 13),
+                }}
+              />
+              {search.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  aria-label={ui.clear}
+                  style={{
+                    flexShrink: 0,
+                    border: `1px solid ${borderColor}`,
+                    background: panelBackground,
+                    color: textSecondary,
+                    borderRadius: 10,
+                    padding: "8px 10px",
+                    cursor: "pointer",
+                    ...bodyFont,
+                    fontSize: coerceFontSize(bodyFont?.fontSize, 12),
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {ui.clear}
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -4398,9 +4791,7 @@ export default function RoboticsMonitoringDashboard(
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {enableRealtimeSimulation && !isStatic
-                            ? ui.live
-                            : ui.snapshot}
+                          {ui.snapshot}
                         </div>
                       </div>
 
@@ -4543,9 +4934,15 @@ export default function RoboticsMonitoringDashboard(
                                     type="button"
                                     onClick={() => openEventDetail(l.feedRow)}
                                     style={{
-                                      border: `1px solid ${withAlpha(sevColor, 0.45)}`,
-                                      background: withAlpha(sevColor, 0.14),
-                                      color: sevColor,
+                                      border: `1px solid ${withAlpha(
+                                        l.resolved ? statusOnline : sevColor,
+                                        0.45
+                                      )}`,
+                                      background: withAlpha(
+                                        l.resolved ? statusOnline : sevColor,
+                                        0.14
+                                      ),
+                                      color: l.resolved ? statusOnline : sevColor,
                                       borderRadius: 8,
                                       padding: "4px 10px",
                                       cursor: "pointer",
@@ -4555,7 +4952,7 @@ export default function RoboticsMonitoringDashboard(
                                       fontWeight: 600,
                                     }}
                                   >
-                                    {ui.logAction}
+                                    {l.resolved ? ui.logActionDone : ui.logAction}
                                   </button>
                                 </span>
                               </div>
@@ -6158,6 +6555,9 @@ export default function RoboticsMonitoringDashboard(
           bodyFont={bodyFont}
           monoFont={monoFont}
           onClose={closeEventDetail}
+          onAssigneeChange={handleEventAssigneeChange}
+          onChecklistToggle={handleEventChecklistToggle}
+          onDraftSave={handleEventDraftSave}
           onAck={handleEventAck}
           onResolve={handleEventResolve}
           onViewDevice={handleViewDeviceFromEvent}

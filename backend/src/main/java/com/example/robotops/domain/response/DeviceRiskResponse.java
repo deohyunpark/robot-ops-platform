@@ -1,6 +1,6 @@
 package com.example.robotops.domain.response;
 
-import com.example.robotops.domain.deviceStateType.RiskLevel;
+import com.example.robotops.domain.enums.RiskLevel;
 import lombok.Builder;
 
 @Builder

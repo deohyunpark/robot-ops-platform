@@ -31,12 +31,16 @@ export type BackendDeviceTelemetry = {
   errors?: Array<{ code?: string } | string>
 }
 
+export type DeviceEventStatus = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | string
+
 export type BackendDeviceEvent = {
   id: string | null
   deviceId?: string
   robotId?: string
   eventType: string
   severity: string
+  eventStatus?: DeviceEventStatus | null
+  resolvedAt?: string | null
   payload?: {
     speedMps?: number
     x?: number
@@ -213,11 +217,16 @@ export function deviceEventFeedRowToBackendEvent(
 
 /** WS/API event payload — RedisEventResponse(eventName) and legacy eventType shapes. */
 export function backendEventsFromPayload(input: unknown): BackendDeviceEvent[] {
+  const batch = eventBatchFromPayload(input)
+  if (batch.some((ev) => ev.id != null && String(ev.id).trim() !== "")) {
+    return batch
+  }
+
   const feedRows = deviceEventsFeedFromPayload(input)
   if (feedRows.length) {
     return feedRows.map(deviceEventFeedRowToBackendEvent)
   }
-  return eventBatchFromPayload(input)
+  return batch
 }
 
 export function resolveEventDeviceId(ev: BackendDeviceEvent): string {
@@ -935,6 +944,31 @@ function normalizeFrame(input: unknown): BackendDeviceTelemetry | null {
   return null
 }
 
+function readEventId(obj: Record<string, unknown>): string | null {
+  const raw = obj.id ?? obj.eventId
+  if (typeof raw === "number" && Number.isFinite(raw)) return String(raw)
+  if (typeof raw === "string" && raw.trim()) return raw.trim()
+  return null
+}
+
+function readEventStatus(obj: Record<string, unknown>): DeviceEventStatus | null {
+  const raw = obj.eventStatus ?? obj.event_status
+  if (typeof raw !== "string" || !raw.trim()) return null
+  return raw.trim().toUpperCase()
+}
+
+function readResolvedAt(obj: Record<string, unknown>): string | null {
+  const raw = obj.resolvedAt ?? obj.resolved_at
+  if (typeof raw !== "string" || !raw.trim()) return null
+  return raw.trim()
+}
+
+export function isBackendEventResolved(
+  ev: BackendDeviceEvent | null | undefined
+): boolean {
+  return (ev?.eventStatus ?? "").toUpperCase() === "RESOLVED"
+}
+
 function normalizeEventFrame(input: unknown): BackendDeviceEvent | null {
   if (!input || typeof input !== "object") return null
   const obj = input as Record<string, unknown>
@@ -946,7 +980,10 @@ function normalizeEventFrame(input: unknown): BackendDeviceEvent | null {
     if (typeof eventType === "string" && typeof deviceId === "string") {
       return {
         ...(payload as BackendDeviceEvent),
+        id: readEventId(payload) ?? readEventId(obj),
         deviceId,
+        eventStatus: readEventStatus(payload) ?? readEventStatus(obj),
+        resolvedAt: readResolvedAt(payload) ?? readResolvedAt(obj),
       }
     }
   }
@@ -956,7 +993,10 @@ function normalizeEventFrame(input: unknown): BackendDeviceEvent | null {
   if (typeof deviceId === "string" && typeof eventType === "string") {
     return {
       ...(obj as BackendDeviceEvent),
+      id: readEventId(obj),
       deviceId,
+      eventStatus: readEventStatus(obj),
+      resolvedAt: readResolvedAt(obj),
     }
   }
   return null
