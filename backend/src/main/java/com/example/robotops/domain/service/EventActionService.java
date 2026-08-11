@@ -111,9 +111,12 @@ public class EventActionService {
 
         EventAction eventAction = deviceEvent.getEventAction();
 
-        if(eventAction.getDescription() != null && eventAction.isAllChecked()) {
-            deviceEvent.resolve();
+        if(eventAction.getDescription() == null || !eventAction.isAllChecked()) {
+            throw new RobotOpsException(
+                    ErrorCode.EVENT_ACTION_NOT_COMPLETED
+            );
         }
+        deviceEvent.resolve();
 
 
         String deviceId = deviceEvent.getDeviceId();

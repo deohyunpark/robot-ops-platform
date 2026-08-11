@@ -137,7 +137,12 @@ public enum ErrorCode {
             "EVENT_ACTION_001",
             "이벤트액션을 찾을 수 없습니다.",
             false
-    );
+
+    ), EVENT_ACTION_NOT_COMPLETED(
+            HttpStatus.BAD_REQUEST,
+            "EVENT_ACTION_002",
+            "이벤트가 조치되지 않았습니다.",
+            false);
 
     private final HttpStatus status;
     private final String code;
