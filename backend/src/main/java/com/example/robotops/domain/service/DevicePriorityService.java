@@ -11,9 +11,11 @@ import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -38,6 +40,8 @@ public class DevicePriorityService {
         /** exception ㄴㄴ 데이터 없으면 널 넣어서 상태만 보여주기
         */
         // critical 이 있는지
+        log.info("Query execution started createPriorityResponse : {}", deviceId);
+
         boolean hasOpenCritical =
                 deviceEventRepository
                         .existsOpenCritical(deviceId);
@@ -61,6 +65,8 @@ public class DevicePriorityService {
         // insight 중 위험도 높은 insight
         AiAnalysis aiAnalysis = aiAnalysisRepository.findHighestPriorityAiAnalysis(deviceId)
                 .orElse(null);
+
+        log.info("Query execution completed createPriorityResponse: {}", deviceId);
 
         int riskScore =
                 aiAnalysis == null
