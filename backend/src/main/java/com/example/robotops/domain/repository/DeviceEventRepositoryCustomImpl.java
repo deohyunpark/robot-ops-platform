@@ -205,6 +205,17 @@ public class DeviceEventRepositoryCustomImpl implements DeviceEventRepositoryCus
         return Optional.ofNullable(event);
     }
 
+    @Override
+    public List<DeviceEvent> findAllOpenEvents(List<String> deviceIds) {
+        return queryFactory
+                .selectFrom(deviceEvent)
+                .leftJoin(deviceEvent.eventAction, eventAction).fetchJoin()
+                .where(
+                        deviceEvent.deviceId.in(deviceIds),
+                        deviceEvent.eventStatus.eq(EventStatus.OPEN)
+                )
+                .fetch();
+    }
 
     private BooleanExpression robotIdEq(String robotId) {
         return hasText(robotId)

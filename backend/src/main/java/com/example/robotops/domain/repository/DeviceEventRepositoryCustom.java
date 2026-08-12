@@ -28,4 +28,6 @@ public interface DeviceEventRepositoryCustom {
     Optional<DeviceEvent> findHighestPriorityOpenEvent(String deviceId);
 
     Optional<DeviceEvent> findByIdWithAction(Long eventId);
+
+    List<DeviceEvent> findAllOpenEvents(List<String> deviceIds);
 }

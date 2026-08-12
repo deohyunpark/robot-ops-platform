@@ -68,7 +68,6 @@ public class DeviceEvent {
 
     private OffsetDateTime resolvedAt;
 
-    @JsonIgnore
     @OneToOne(
             mappedBy = "deviceEvent",
             fetch = FetchType.LAZY

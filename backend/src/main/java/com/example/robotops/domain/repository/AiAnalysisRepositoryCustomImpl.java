@@ -5,6 +5,7 @@ import static com.example.robotops.domain.entity.QAiAnalysis.aiAnalysis;
 import com.example.robotops.domain.entity.AiAnalysis;
 import com.example.robotops.domain.response.AiAnalysisResponse;
 import com.querydsl.jpa.impl.JPAQueryFactory;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -44,5 +45,17 @@ public class AiAnalysisRepositoryCustomImpl implements AiAnalysisRepositoryCusto
                         .fetchFirst();
 
         return Optional.ofNullable(result);
+    }
+
+    @Override
+    public List<AiAnalysis> findAllByRobotIds(List<String> deviceIds, OffsetDateTime from) {
+        return queryFactory
+                .selectFrom(aiAnalysis)
+                .where(
+                        aiAnalysis.robotId.in(deviceIds),
+                        aiAnalysis.riskScore.goe(80),
+                        aiAnalysis.riskLevel.eq("HIGH")
+                )
+                .fetch();
     }
 }

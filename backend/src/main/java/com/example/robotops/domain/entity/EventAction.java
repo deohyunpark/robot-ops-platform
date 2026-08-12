@@ -32,7 +32,7 @@ public class EventAction {
 
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(
-            name = "event_event_id",
+            name = "device_event_id",
             nullable = false,
             unique = true
     )
