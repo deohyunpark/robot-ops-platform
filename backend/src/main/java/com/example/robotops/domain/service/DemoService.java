@@ -97,6 +97,13 @@ public class DemoService {
         if (throughputKeys != null && !throughputKeys.isEmpty()) {
             redisTemplate.delete(throughputKeys);
         }
+
+        Set<String> coolDownAndPendingKeys =
+                redisTemplate.keys("ai:*");
+
+        if(coolDownAndPendingKeys != null && !coolDownAndPendingKeys.isEmpty()) {
+            redisTemplate.delete(coolDownAndPendingKeys);
+        }
     }
 
     private void clearDatabase() {

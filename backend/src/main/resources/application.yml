@@ -34,6 +34,12 @@ app:
   mqtt:
     brokerUrl: ${MQTT_BROKER_URL:tcp://mqtt:1883}
 
+robotops:
+  kafka:
+    insight-feed-partitions: 6
+    insight-openai-concurrency: 6
+    ensure-partitions: true
+
 openai:
   api-key: ${OPENAI_API_KEY}
   model: gpt-5-mini

@@ -1,10 +1,11 @@
 package com.example.robotops.domain.service;
 
-
 import com.example.robotops.domain.service.daisy.DailyReportTool;
 import com.example.robotops.domain.service.daisy.DeviceTool;
 import com.example.robotops.domain.service.daisy.EventTool;
 import com.example.robotops.domain.service.daisy.OperationTool;
+import com.example.robotops.observability.RobotOpsGrafanaMetrics;
+import io.micrometer.core.instrument.Timer;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import lombok.RequiredArgsConstructor;
@@ -23,9 +24,21 @@ public class DaisyAssistantService {
     private final DeviceTool deviceTool;
     private final OperationTool operationTool;
     private final DailyReportTool dailyReportTool;
+    private final RobotOpsGrafanaMetrics metrics;
 
     public String askEvent(String message) {
+        Timer.Sample sample = metrics.startDaisyChat();
+        try {
+            String answer = chat(message);
+            metrics.stopDaisyChat(sample, "success");
+            return answer;
+        } catch (RuntimeException ex) {
+            metrics.stopDaisyChat(sample, "error");
+            throw ex;
+        }
+    }
 
+    private String chat(String message) {
         ZoneId zoneId = ZoneId.of("Asia/Seoul");
         ZonedDateTime now = ZonedDateTime.now(zoneId);
 
@@ -74,11 +87,10 @@ public class DaisyAssistantService {
                 )
                 .user(message)
                 .tools(
-                    eventTool, deviceTool, operationTool, dailyReportTool
+                        eventTool, deviceTool, operationTool, dailyReportTool
                 )
                 .advisors(new SimpleLoggerAdvisor())
                 .call()
                 .content();
     }
-
 }

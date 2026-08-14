@@ -36,7 +36,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * <p>검증 포인트: TelemetryPayload JSON → EventEngine → sendDeviceEvent Kafka 호출
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("DeviceEventConsumer (TODO)")
+@DisplayName("DeviceEventConsumer")
 class DeviceEventConsumerTest {
 
     @Mock

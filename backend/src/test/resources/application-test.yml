@@ -25,6 +25,10 @@ spring:
 openai:
   api-key: test-key
 
+robotops:
+  kafka:
+    ensure-partitions: false
+
 logging:
   level:
     org.hibernate.SQL: DEBUG

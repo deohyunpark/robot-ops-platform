@@ -13,6 +13,9 @@ import com.example.robotops.infra.openai.AiSummaryResponse;
 import com.example.robotops.infra.openai.OpenAiClient;
 import com.example.robotops.infra.redis.JsonUtil;
 import com.example.robotops.infra.websocket.WebsocketService;
+import com.example.robotops.observability.InsightFeedCycleTracker;
+import com.example.robotops.observability.RobotOpsGrafanaMetrics;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.DltHandler;
@@ -38,26 +41,32 @@ public class InsightAiConsumer {
     private final AiAnalysisService aiAnalysisService;
 
     private final KafkaProducer kafkaProducer;
+    private final RobotOpsGrafanaMetrics metrics;
+    private final InsightFeedCycleTracker cycleTracker;
 
     @KafkaListener(topics = "robot.device.feed.detect", groupId = "all")
     public void detectInsight(String message) {
+        // 피드 생성
+        Timer.Sample sample = metrics.startInsightFeedDetect();
+        try {
+            TelemetryPayload telemetryPayload = jsonUtil.fromJson(message, TelemetryPayload.class);
+            EventContext eventContext = new EventContext(
+                    telemetryPayload,
+                    redisSnapshotBuilder.build(telemetryPayload)
+            );
+            InsightFeedResponse insightFeedResponse = insightAnalyzer.analyze(eventContext);
 
-
-        // 1. mqtt -> payload 변환
-        TelemetryPayload telemetryPayload = jsonUtil.fromJson(message, TelemetryPayload.class);
-
-        // 2. 이벤트 생성시 필요한 context 생성
-        EventContext eventContext = new EventContext(telemetryPayload, redisSnapshotBuilder.build(telemetryPayload));
-
-        // 3. rule check 후 insight 생성
-        InsightFeedResponse insightFeedResponse = insightAnalyzer.analyze(eventContext);
-
-        // 3. request DB, Redis, websocket 발행 -> kafka
-        if (insightFeedResponse != null) {
-            aiPublishService.publishIfNeeded(insightFeedResponse);
+            if (insightFeedResponse != null) {
+                aiPublishService.publishIfNeeded(insightFeedResponse);
+                metrics.stopInsightFeedDetect(sample, "detected");
+            } else {
+                metrics.stopInsightFeedDetect(sample, "none");
+            }
+        } catch (RuntimeException ex) {
+            metrics.stopInsightFeedDetect(sample, "error");
+            throw ex;
         }
     }
-
 
     @RetryableTopic(
             attempts = "4",
@@ -69,15 +78,22 @@ public class InsightAiConsumer {
             retryTopicSuffix = "-retry",
             dltTopicSuffix = "-dlt"
     )
-    @KafkaListener(topics = "robot.device.feed", groupId = "openAi", concurrency = "3")
+    @KafkaListener(
+            topics = "robot.device.feed",
+            groupId = "openAi",
+            concurrency = "${robotops.kafka.insight-openai-concurrency:6}"
+    )
     public void sendInsightOpenAI(String message) {
-
-        InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
-        AiSummaryResponse response = openAiClient.request(insightFeedResponse);
-
-
-        kafkaProducer.createAiAnalysis(AiAnalysisRequest.of(insightFeedResponse, response));
-
+        Timer.Sample sample = metrics.startInsightOpenAiRequest();
+        try {
+            InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
+            AiSummaryResponse response = openAiClient.request(insightFeedResponse);
+            kafkaProducer.createAiAnalysis(AiAnalysisRequest.of(insightFeedResponse, response));
+            metrics.stopInsightOpenAiRequest(sample, "success");
+        } catch (RuntimeException ex) {
+            metrics.stopInsightOpenAiRequest(sample, "error");
+            throw ex;
+        }
     }
 
     @DltHandler
@@ -86,6 +102,7 @@ public class InsightAiConsumer {
             @Header(KafkaHeaders.RECEIVED_TOPIC)
             String originalTopic
     ) {
+        metrics.recordInsightFeedDlt(originalTopic);
         log.error(
                 "AI message moved to DLT. originalTopic={}, message={}",
                 originalTopic,
@@ -95,20 +112,29 @@ public class InsightAiConsumer {
 
     @KafkaListener(topics = "robot.device.feed.analysis", groupId = "db")
     public void saveAiAnalysis(String message) {
-
-        AiAnalysisRequest aiAnalysisRequest = jsonUtil.fromJson(message, AiAnalysisRequest.class);
-        aiAnalysisService.saveAiAnalysis(aiAnalysisRequest);
+        Timer.Sample sample = metrics.startInsightAnalysisSave();
+        try {
+            AiAnalysisRequest aiAnalysisRequest = jsonUtil.fromJson(message, AiAnalysisRequest.class);
+            aiAnalysisService.saveAiAnalysis(aiAnalysisRequest);
+            metrics.stopInsightAnalysisSave(sample, "success");
+        } catch (RuntimeException ex) {
+            metrics.stopInsightAnalysisSave(sample, "error");
+            throw ex;
+        }
     }
 
     @KafkaListener(topics = "robot.device.feed.analysis", groupId = "ws")
     public void sendAiAnalysis(String message) {
-
+        Timer.Sample sample = metrics.startInsightWsBroadcast();
         AiAnalysisRequest aiAnalysisRequest = jsonUtil.fromJson(message, AiAnalysisRequest.class);
-
-        websocketService.broadcastInsightFeed(aiAnalysisRequest.aiSummaryResponse());
+        try {
+            websocketService.broadcastInsightFeed(aiAnalysisRequest.aiSummaryResponse());
+            cycleTracker.completeDelivered(aiAnalysisRequest.insightFeedResponse().robotId());
+            metrics.stopInsightWsBroadcast(sample, "success");
+        } catch (RuntimeException ex) {
+            cycleTracker.failDelivered(aiAnalysisRequest.insightFeedResponse().robotId());
+            metrics.stopInsightWsBroadcast(sample, "error");
+            throw ex;
+        }
     }
-
-
-
-
 }
