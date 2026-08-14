@@ -5,7 +5,7 @@
 > AI 기반 Fleet Operations Platform
 
 
-![Robot Ops Demo](./docs/images/화면 기록 2026-08-14 오후 4.11.34.gif)
+![Robot Ops Demo](./docs/images/4.11.34.gif)
 
 ## 🎯 Project Goal
 
