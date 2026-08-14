@@ -17,13 +17,12 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class OfflineDetectorScheduler {
 
-    private static final long TIMEOUT = 60 * 1000 * 5; // 5분
+    private static final long TIMEOUT = 60 * 1000; // 1분
     private final RedisService redisService;
     private final KafkaProducer kafkaProducer;
 
     /**
      * 시뮬레이터 기준 타임아웃 잡는게 오래걸려서 임시로 10초
-     * todo : 테스트 후 시뮬레이터를 수정(타임아웃 길게 유지)
     */
 
     @Scheduled(fixedRate = 2000) // 2초마다 체크

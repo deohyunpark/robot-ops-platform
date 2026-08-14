@@ -7,6 +7,7 @@ import com.example.robotops.domain.response.PriorityDeviceResponse;
 import com.example.robotops.domain.response.UtilizationResponse;
 import com.example.robotops.error.ErrorCode;
 import com.example.robotops.error.RobotOpsException;
+import com.example.robotops.observability.RobotOpsGrafanaMetrics;
 import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import java.io.ByteArrayOutputStream;
@@ -38,6 +39,7 @@ public class PdfReportService {
     private static final String KOREAN_FONT = "Noto Sans KR";
 
     private final SpringTemplateEngine templateEngine;
+    private final RobotOpsGrafanaMetrics metrics;
 
     private static String formatDateTime(OffsetDateTime value) {
         if (value == null) {
@@ -142,6 +144,13 @@ public class PdfReportService {
     }
 
     public byte[] createDailyReport(
+            DailyReportResponse report,
+            String aiSummary
+    ) {
+        return metrics.timeDailyReportPdfRender(() -> renderDailyReport(report, aiSummary));
+    }
+
+    private byte[] renderDailyReport(
             DailyReportResponse report,
             String aiSummary
     ) {

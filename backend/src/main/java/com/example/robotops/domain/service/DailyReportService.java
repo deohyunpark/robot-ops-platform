@@ -1,6 +1,5 @@
 package com.example.robotops.domain.service;
 
-
 import com.example.robotops.domain.response.AiAnalysisResponse;
 import com.example.robotops.domain.response.DailyReportResponse;
 import com.example.robotops.domain.response.DeviceEventResponse;
@@ -11,7 +10,7 @@ import com.example.robotops.domain.response.ReportOverview;
 import com.example.robotops.domain.response.ReportStatistics;
 import com.example.robotops.domain.response.ThroughputResponse;
 import com.example.robotops.domain.response.UtilizationResponse;
-import com.example.robotops.domain.service.event.EventHandler;
+import com.example.robotops.observability.RobotOpsGrafanaMetrics;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -29,10 +28,13 @@ public class DailyReportService {
     private final DeviceStateService deviceStateService;
     private final DeviceEventService deviceEventService;
     private final DashBoardService dashBoardService;
-    private final EventHandler offlineHandler;
+    private final RobotOpsGrafanaMetrics metrics;
 
     public DailyReportResponse createDailyReport() {
+        return metrics.timeDailyReportData(this::buildDailyReport);
+    }
 
+    private DailyReportResponse buildDailyReport() {
         OffsetDateTime from =
                 LocalDate.now()
                         .atStartOfDay()
@@ -41,7 +43,6 @@ public class DailyReportService {
         OffsetDateTime to =
                 OffsetDateTime.now();
 
-        // KPI 카드 요약
         ReportOverview overview = getOverview(from, to);
 
         final ThroughputResponse throughput = dashBoardService.getThroughput();
@@ -66,7 +67,6 @@ public class DailyReportService {
                 priority,
                 analyses
         );
-
     }
 
     private ReportOverview getOverview(OffsetDateTime from, OffsetDateTime to) {
@@ -77,22 +77,15 @@ public class DailyReportService {
         List<DeviceStateResponse> devices =
                 deviceStateService.getAllDeviceStateList();
 
-        // total
         int total = devices.size();
-
-        // offline
         int offline = deviceEventService.findOfflineEvents(from, to).size();
-
-        // online
         int online = total - offline;
 
-        // critical
         int critical = Math.toIntExact(
                 events.stream()
                         .filter(d -> Objects.equals(d.severity(), "CRITICAL"))
                         .count());
 
-        // warning
         int warning = Math.toIntExact(
                 events.stream()
                         .filter(d -> Objects.equals(d.severity(), "WARNING"))

@@ -2,6 +2,7 @@ package com.example.robotops.domain.service.daisy;
 
 import com.example.robotops.domain.response.DailyReportResponse;
 import com.example.robotops.domain.service.DailyReportService;
+import com.example.robotops.observability.RobotOpsGrafanaMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 public class DailyReportTool {
 
     private final DailyReportService dailyReportService;
+    private final RobotOpsGrafanaMetrics metrics;
 
     @Tool(description = """
             오늘 하루의 로봇 운영 리포트 생성을 위한 실제 운영 데이터를 조회한다.
@@ -60,12 +62,7 @@ public class DailyReportTool {
                                                     - 위험도가 높은 장비와 주요 장애를 우선 설명한다.
             """)
     public DailyReportResponse getDailyReport() {
-
-        log.info(
-                "[DAISY TOOL] getDailyReport called"
-        );
-
-        return dailyReportService
-                .createDailyReport();
+        log.info("[DAISY TOOL] getDailyReport called");
+        return metrics.timeDailyReportTool(dailyReportService::createDailyReport);
     }
 }
