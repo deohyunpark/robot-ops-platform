@@ -5,6 +5,7 @@ import com.example.robotops.domain.request.DeviceStateRequest;
 import com.example.robotops.domain.response.DeviceInsightResponse;
 import com.example.robotops.domain.response.DeviceStateResponse;
 import com.example.robotops.domain.response.InsightFeedResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -17,6 +18,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
 import org.springframework.stereotype.Service;
@@ -307,6 +309,60 @@ public class RedisService {
         String key = current15MinBucketKeyByDeviceId(deviceId);
 
         return getHashValue(key);
+    }
+
+    public Map<String, Map<String, String>> getUtilizationValuesByDevices(
+            List<String> deviceIds
+    ) {
+
+        List<String> keys = deviceIds.stream()
+                .map(this::current15MinBucketKeyByDeviceId)
+                .toList();
+
+        List<Object> rawResults =
+                stringRedisTemplate.executePipelined(
+                        (RedisCallback<Object>) connection -> {
+
+                            for (String key : keys) {
+                                connection.hashCommands()
+                                        .hGetAll(
+                                                key.getBytes(
+                                                        StandardCharsets.UTF_8
+                                                )
+                                        );
+                            }
+
+                            return null;
+                        }
+                );
+
+        Map<String, Map<String, String>> result =
+                new HashMap<>();
+
+        for (int i = 0; i < deviceIds.size(); i++) {
+
+            Map<Object, Object> raw =
+                    (Map<Object, Object>) rawResults.get(i);
+
+            Map<String, String> value =
+                    new HashMap<>();
+
+            for (Map.Entry<Object, Object> entry
+                    : raw.entrySet()) {
+
+                value.put(
+                        String.valueOf(entry.getKey()),
+                        String.valueOf(entry.getValue())
+                );
+            }
+
+            result.put(
+                    deviceIds.get(i),
+                    value
+            );
+        }
+
+        return result;
     }
 
     public Map<String, String> getTotalUtilizationValue() {

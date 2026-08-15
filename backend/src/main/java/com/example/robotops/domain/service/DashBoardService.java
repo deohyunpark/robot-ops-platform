@@ -93,6 +93,36 @@ public class DashBoardService {
 
     public List<UtilizationResponse> getUtilization() {
 
+        List<String> deviceIdList =
+                deviceStateRepository.findAllDeviceId();
+
+        long currentBucketStart =
+                redisService.currentBucketStart()
+                        .toInstant()
+                        .toEpochMilli();
+
+        Map<String, Map<String, String>> utilizationMap =
+                redisService.getUtilizationValuesByDevices(
+                        deviceIdList
+                );
+
+        return deviceIdList.stream()
+                .map(deviceId ->
+                        UtilizationResponse.from(
+                                deviceId,
+                                currentBucketStart,
+                                utilizationMap.getOrDefault(
+                                        deviceId,
+                                        Map.of()
+                                )
+                        )
+                )
+                .toList();
+    }
+
+
+    public List<UtilizationResponse> getUtilizationDeprecated() {
+
         List<String> deviceIdList = deviceStateRepository.findAllDeviceId();
 
         long currentBucketStart = redisService.currentBucketStart().toInstant().toEpochMilli();
@@ -106,6 +136,8 @@ public class DashBoardService {
                 }
         ).toList();
     }
+
+
 
     public TotalUtilizationResponse getTotalUtilization() {
 

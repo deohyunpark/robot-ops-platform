@@ -20,6 +20,8 @@ spring:
       host: localhost
       port: 6379
   kafka:
+    listener:
+      auto-startup: false
     bootstrap-servers: localhost:9092
 
 openai:

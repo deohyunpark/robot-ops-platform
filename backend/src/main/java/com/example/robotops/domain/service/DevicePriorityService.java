@@ -172,12 +172,7 @@ public class DevicePriorityService {
         };
     }
 
-    /// Depressed
-    ///
-    ///
-    ///
-    ///
-    public List<PriorityDeviceResponse> getPriorityDevicesDepressed() {
+    public List<PriorityDeviceResponse> getPriorityDevicesDeprecated() {
 
         List<String> deviceIds =
                 deviceStateRepository.findAllDeviceId();
