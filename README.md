@@ -1,8 +1,14 @@
+<div align="center">
+
 # 🤖 Robot Ops Platform
 
 > 실시간 로봇 텔레메트리를 수집·분석하고,
 > 이상 상황 탐지부터 운영자 조치까지 지원하는
 > AI 기반 Fleet Operations Platform
+
+</div>
+
+<div align="center">
 
 다수의 로봇을 운영하는 환경에서는 단순히 현재 상태를 확인하는 것보다
 
@@ -22,69 +28,95 @@ MQTT → Kafka → Redis/PostgreSQL → WebSocket 기반의 실시간 데이터 
 이벤트 탐지, Risk Score 계산, AI 분석, 운영 대응 Workflow,
 일일 PDF 리포트까지 구현했습니다.
 
+</div>
+
 ---
 
-## 🖥️ 주요화면
+<div align="center">
+
+## 🖥️ Demo
+
+</div>
+
+<div align="center">
 
 ![Robot Ops Demo](./docs/images/4.11.34.gif)
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <b>관제 코파일럿</b>
-      <br><br>
-      <img src="./docs/images/1.gif" width="100%">
-      <br>
-      <sub>전체 로봇 상태 및 이상 징후 실시간 관제</sub>
-    </td>
+</div>
 
-    <td align="center" width="50%">
-      <b>Insight Feed</b>
-      <br><br>
-      <img src="./docs/images/feed.gif" width="100%">
-      <br>
-      <sub>이상 징후 기반 AI 분석 피드 제공</sub>
-    </td>
-  </tr>
+<div align="center">
 
-  <tr>
-    <td align="center" width="50%">
-      <b>Daisy Assistant</b>
-      <br><br>
-      <img src="./docs/images/daisy.gif" width="100%">
-      <br>
-      <sub>관제 데이터를 기반으로 운영 질의 및 대응 지원</sub>
-    </td>
+### 🤖 관제 코파일럿
 
-    <td align="center" width="50%">
-      <b>디바이스 상세</b>
-      <br><br>
-      <img src="./docs/images/device-detail.gif" width="100%">
-      <br>
-      <sub>개별 로봇의 상태 · 이벤트 · Telemetry 상세 조회</sub>
-    </td>
-  </tr>
+전체 로봇의 상태와 이상 징후를 실시간으로 모니터링합니다.
 
-  <tr>
-    <td align="center" width="50%">
-      <b>이벤트 조치</b>
-      <br><br>
-      <img src="./docs/images/action.gif" width="100%">
-      <br>
-      <sub>발생 이벤트 확인 및 운영자 조치 처리</sub>
-    </td>
+![관제 코파일럿](./docs/images/1.gif)
 
-    <td align="center" width="50%">
-      <b>생산량 & 가동률</b>
-      <br><br>
-      <img src="./docs/images/kpi.gif" width="100%">
-      <br>
-      <sub>실시간 Throughput 및 Utilization 모니터링</sub>
-    </td>
-  </tr>
-</table>
+</div>
 
 ---
+
+<div align="center">
+
+### 🧠 Insight Feed
+
+탐지된 이상 징후를 기반으로 현재 상황, 가능한 원인과 권장 조치를 제공합니다.
+
+![Insight Feed](./docs/images/feed.gif)
+
+</div>
+
+---
+
+<div align="center">
+
+### 🌼 Daisy Assistant
+
+실제 관제 데이터를 기반으로 운영 현황 조회 및 대응을 지원합니다.
+
+![Daisy Assistant](./docs/images/daisy.gif)
+
+</div>
+
+---
+
+<div align="center">
+
+### 🔍 디바이스 상세
+
+개별 로봇의 상태, Telemetry와 발생 이벤트를 상세 조회합니다.
+
+![디바이스 상세](./docs/images/device-detail.gif)
+
+</div>
+
+---
+
+<div align="center">
+
+### ✅ 이벤트 조치
+
+이벤트 확인부터 ACK, 체크리스트 수행, 해결까지 운영 조치 Workflow를 제공합니다.
+
+![이벤트 조치](./docs/images/action.gif)
+
+</div>
+
+---
+
+<div align="center">
+
+### 📊 생산량 & 가동률
+
+실시간 Throughput과 Utilization을 집계하여 운영 KPI를 제공합니다.
+
+![생산량 및 가동률](./docs/images/kpi.gif)
+
+</div>
+
+---
+
+<div align="center">
 
 ## 📈 핵심 성과
 
@@ -95,12 +127,18 @@ MQTT → Kafka → Redis/PostgreSQL → WebSocket 기반의 실시간 데이터 
 | Redis AVG (1,000 devices) | 74.199ms | **19.503ms** |
 | Redis P95 (1,000 devices) | 189.881ms | **40.182ms** |
 
+</div>
+
 
 ---
 
+<div align="center">
+
 ## 🏗 Architecture
 
-![Robot Ops Demo](./docs/images/diagram-export-2026.-8.-15.-오후-9_50_38.png)
+![Robot Ops Demo](./docs/images/archi.png)
+
+</div>
 
 ```mermaid
 flowchart LR
@@ -136,7 +174,12 @@ flowchart LR
     TOOL --> REDIS
     TOOL --> DB
 ```
+
+<div align="center">
+
 ## 📚 Development Details
+
+</div>
 
 <details>
 <summary><b>프로젝트 구조 및 상세 데이터 흐름 보기</b></summary>
@@ -268,8 +311,11 @@ InsightAiConsumer.sendAiAnalysis()     # group: ws
 
 </details>
 
+<div align="center">
 
 ## ✨ Core Features
+
+</div>
 
 #### 실시간 Fleet Monitoring
 
@@ -335,11 +381,19 @@ Spring AI Tool Calling을 활용하여
 
 ---
 
+<div align="center">
+
 ## 🔥 Troubleshooting
+
+</div>
+
+<div align="center">
 
 ### Kafka
 
 **Consumer Lag 약 40건 → 0~1건 / End-to-End Latency 약 60~100초 → 약 10초**
+
+</div>
 
 <details>
 <summary><b>상세 트러블슈팅 과정 보기</b></summary>
@@ -635,9 +689,13 @@ Consumer Group / Partition 확인
 
 </details>
 
+<div align="center">
+
 ### Redis
 
 **1,000대 기준 AVG 74.199ms → 19.503ms (약 73.7% 감소) / P95 189.881ms → 40.182ms (약 78.8% 감소)**
+
+</div>
 
 <details>
 <summary><b>상세 트러블슈팅 과정 보기</b></summary>
@@ -869,6 +927,8 @@ AVG / P95 / MAX 비교
 
 ---
 
+<div align="center">
+
 ## 🛠 Tech Stack
 
 | Layer | Technology | Purpose |
@@ -886,9 +946,15 @@ AVG / P95 / MAX 비교
 | Infra | Docker Compose / nginx | Runtime Environment |
 | CI | GitHub Actions | Build / Test |
 
+</div>
+
 ---
 
+<div align="center">
+
 ## 🧩 Technical Decisions
+
+</div>
 
 ### Why MQTT?
 
@@ -926,7 +992,11 @@ Kafka를 중간 Event Stream으로 사용하여
 
 ---
 
+<div align="center">
+
 ## 🚀 Getting Started
+
+</div>
 
 ### 사전 요구사항
 
@@ -957,12 +1027,16 @@ cd infra
 docker compose up -d --build
 ```
 
+<div align="center">
+
 | URL | 설명 |
 |---|---|
 | http://localhost:3000 | Frontend (Dashboard) |
 | http://localhost:8080 | Backend API |
 | http://localhost:9090 | Prometheus |
 | http://localhost:3001 | Grafana |
+
+</div>
 
 데모 텔레메트리 시작:
 
