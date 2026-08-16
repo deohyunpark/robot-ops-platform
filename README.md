@@ -28,8 +28,72 @@ MQTT → Kafka → Redis/PostgreSQL → WebSocket 기반의 실시간 데이터 
 이벤트 탐지, Risk Score 계산, AI 분석, 운영 대응 Workflow,
 일일 PDF 리포트까지 구현했습니다.
 
+
+
 </div>
 
+<div align="center">
+
+**개발 기간** 2026.04.16 ~ 2026.08.16 (약 4개월) · **개발 인원** 1인 (기획·설계·백엔드·프론트엔드·인프라 전 영역 단독 개발)
+
+</div>
+
+<div align="center">
+
+![Java](https://img.shields.io/badge/Java-17-orange)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-brightgreen)
+![React](https://img.shields.io/badge/React-19-61DAFB)
+![Kafka](https://img.shields.io/badge/Kafka-3.7-231F20)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
+
+</div>
+
+<div align="center">
+
+## 🌐 배포 구조
+
+</div>
+
+이 프로젝트는 별도의 클라우드 인프라 없이,
+**로컬 환경에서 전체 스택을 Docker Compose로 구동한 뒤
+ngrok Tunnel을 통해 외부에서 접근 가능한 형태로 운영**하고 있습니다.
+
+```text
+[로봇 시뮬레이터] → [로컬 Docker Compose 스택]
+         (Backend / Frontend / Kafka / Redis / PostgreSQL)
+                              ↓
+                        [ngrok Tunnel]
+                              ↓
+        https://landfall-superglue-sequence.ngrok-free.dev/
+```
+
+- AWS/GCP 등 클라우드 배포 대신 ngrok을 택한 이유는,
+  Kafka·Redis·MQTT 등 다중 컨테이너 스택을 저비용으로
+  검증 가능한 형태로 외부에 공유하기 위함이었습니다.
+- `infra/.env`의 `NGROK_AUTHTOKEN` 설정 시
+  `docker compose up` 만으로 터널이 함께 기동됩니다.
+- 상시 가동 서버가 아니므로, 데모 접속이 안 될 경우
+  로컬 실행([Getting Started](#-getting-started) 참고)을 권장드립니다.
+
+---
+
+
+---
+## 📑 목차
+
+- [Demo](#️-demo)
+- [Capacity Planning](#-capacity-planning)
+- [핵심 성과](#-핵심-성과)
+- [Architecture](#-architecture)
+- [Core Features](#-core-features)
+- [Troubleshooting](#-troubleshooting)
+    - [Kafka](#kafka)
+    - [Redis](#redis)
+- [Tech Stack](#-tech-stack)
+- [Technical Decisions](#-technical-decisions)
+- [Getting Started](#-getting-started)
 ---
 
 <div align="center">
@@ -111,6 +175,26 @@ MQTT → Kafka → Redis/PostgreSQL → WebSocket 기반의 실시간 데이터 
 실시간 Throughput과 Utilization을 집계하여 운영 KPI를 제공합니다.
 
 ![생산량 및 가동률](./docs/images/kpi.gif)
+
+</div>
+
+---
+
+<div align="center">
+
+## 📌 Capacity Planning
+
+실제 로봇 운영 환경을 가정하여 예상 트래픽과 인프라 기준을 먼저 설정한 뒤,
+부하 테스트를 통해 해당 조건에서 시스템이 안정적으로 동작하는지 검증했습니다.
+
+### 예상 트래픽
+
+- 운영 로봇: 30대
+- Telemetry 전송 주기: 장비당 1회/sec
+- 평시 Telemetry 유입량: 약 30 msg/s
+- 순간 장애/재연결을 고려한 예상 Peak: 100~150 msg/s
+- Dashboard 조회: 최대 100 VU 기준으로 검증
+- 향후 확장 시나리오: 300~500 msg/s 구간까지 Stress Test
 
 </div>
 
