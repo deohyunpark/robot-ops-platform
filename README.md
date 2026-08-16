@@ -2,6 +2,8 @@
 
 # 🤖 Robot Ops Platform
 
+https://landfall-superglue-sequence.ngrok-free.dev/
+
 > 실시간 로봇 텔레메트리를 수집·분석하고,
 > 이상 상황 탐지부터 운영자 조치까지 지원하는
 > AI 기반 Fleet Operations Platform
