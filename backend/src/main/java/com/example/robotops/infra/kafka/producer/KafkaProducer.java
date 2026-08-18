@@ -209,6 +209,17 @@ public class KafkaProducer {
         );
     }
 
+    public CompletableFuture<SendResult<String, String>> replayInsightFeed(
+            String key,
+            String payload
+    ) {
+        return publish(
+                INSIGHT_FEED_TOPIC,
+                key,
+                payload
+        );
+    }
+
     public CompletableFuture<SendResult<String, String>> createAiAnalysis(
             AiAnalysisRequest request
     ) {

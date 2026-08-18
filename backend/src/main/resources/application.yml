@@ -44,6 +44,9 @@ openai:
   api-key: ${OPENAI_API_KEY}
   model: gpt-5-mini
 
+slack:
+  webhook-url: ${SLACK_WEBHOOK_URL:}
+
 management:
   endpoints:
     web:

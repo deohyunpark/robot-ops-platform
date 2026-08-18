@@ -120,6 +120,20 @@ public enum ErrorCode {
             false
     ),
 
+    INSIGHT_FEED_DLT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "INSIGHT_002",
+            "DLT 메시지를 찾을 수 없습니다.",
+            false
+    ),
+
+    INSIGHT_FEED_DLT_ALREADY_PROCESSED(
+            HttpStatus.CONFLICT,
+            "INSIGHT_003",
+            "이미 처리된 DLT 메시지입니다.",
+            false
+    ),
+
     PDF_GENERATION_FAILED(
             HttpStatus.SERVICE_UNAVAILABLE,
             "PDF_GENERATE_001",

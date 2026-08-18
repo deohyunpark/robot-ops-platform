@@ -1108,6 +1108,7 @@ cd infra
 
 # infra/.env 파일 생성
 # OPENAI_API_KEY=sk-...
+# SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...  # Demo 알림 (선택)
 # NGROK_AUTHTOKEN=...  # ngrok 터널 사용 시 (선택)
 
 docker compose up -d --build
@@ -1163,6 +1164,7 @@ docker compose --profile demo up -d simulator
 | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | Kafka Broker |
 | `MQTT_BROKER_URL` | `tcp://mqtt:1883` | MQTT Broker URL |
 | `OPENAI_API_KEY` | — | Daisy / AI 분석 / PDF 요약 |
+| `SLACK_WEBHOOK_URL` | — | Demo start/stop Slack 알림 (선택) |
 
 </details>
 
@@ -1211,6 +1213,10 @@ docker compose --profile demo up -d simulator
 | `POST` | `/v1/demo/start` | 데모 세션 시작 |
 | `POST` | `/v1/demo/stop` | 데모 세션 종료 |
 | `GET` | `/v1/demo/status` | 데모 상태 조회 |
+| `GET` | `/v1/admin/dlt` | Insight feed DLT 목록 (`?status=PENDING`) |
+| `GET` | `/v1/admin/dlt/{id}` | DLT 메시지 상세 |
+| `POST` | `/v1/admin/dlt/{id}/replay` | DLT 메시지 `robot.device.feed` 재발행 |
+| `POST` | `/v1/admin/dlt/{id}/discard` | DLT 메시지 폐기 |
 | `GET` | `/actuator/health` | Health Check |
 | `GET` | `/actuator/prometheus` | Prometheus Metrics |
 

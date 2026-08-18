@@ -7,10 +7,14 @@ import com.example.robotops.domain.repository.AiAnalysisRepository;
 import com.example.robotops.domain.repository.DeviceEventRepository;
 import com.example.robotops.domain.repository.DeviceStateRepository;
 import com.example.robotops.domain.repository.EventActionRepository;
+import com.example.robotops.domain.repository.InsightFeedDltRepository;
 import com.example.robotops.domain.response.DemoSessionResponse;
 import com.example.robotops.domain.response.DemoStatusResponse;
+import com.example.robotops.infra.slack.SlackNotifier;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +42,12 @@ public class DemoService {
     private final EventActionRepository eventActionRepository;
     private final ActionCheckListRepository actionCheckListRepository;
     private final ActionCheckListItemRepository actionCheckListItemRepository;
+    private final SlackNotifier slackNotifier;
+    private final InsightFeedDltRepository insightFeedDltRepository;
+
+    private static final ZoneId DEMO_TIME_ZONE = ZoneId.of("Asia/Seoul");
+    private static final DateTimeFormatter DEMO_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public DemoSessionResponse start(Duration duration) {
         Instant expiresAt = Instant.now().plus(duration);
@@ -54,6 +64,17 @@ public class DemoService {
                 duration
         );
 
+        slackNotifier.sendAsync(
+                """
+                :robot_face: *Robot Ops demo started*
+                • Duration: %d min
+                • Expires at: %s KST
+                """.formatted(
+                        duration.toMinutes(),
+                        DEMO_TIME_FORMAT.format(expiresAt.atZone(DEMO_TIME_ZONE))
+                ).trim()
+        );
+
         return new DemoSessionResponse(
                 "RUNNING",
                 expiresAt
@@ -62,6 +83,7 @@ public class DemoService {
 
     @Transactional
     public void stop() {
+        slackNotifier.sendAsync(":octagonal_sign: *Robot Ops demo stopped*");
 
         // 1. 시뮬레이터 정지
         redisTemplate.delete(DEMO_STATUS_KEY);
@@ -114,6 +136,7 @@ public class DemoService {
         eventActionRepository.deleteAllInBatch();
         deviceEventRepository.deleteAllInBatch();
         deviceStateRepository.deleteAllInBatch();
+        insightFeedDltRepository.deleteAllInBatch();
     }
 
     public DemoStatusResponse getStatus() {

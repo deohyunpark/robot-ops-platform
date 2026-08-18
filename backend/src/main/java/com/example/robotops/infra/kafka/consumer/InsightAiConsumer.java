@@ -5,6 +5,7 @@ import com.example.robotops.domain.request.AiAnalysisRequest;
 import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.domain.service.AiAnalysisService;
 import com.example.robotops.domain.service.AiPublishService;
+import com.example.robotops.domain.service.InsightFeedDltService;
 import com.example.robotops.domain.service.event.EventContext;
 import com.example.robotops.domain.service.event.RedisSnapshotBuilder;
 import com.example.robotops.domain.service.insight.InsightAnalyzer;
@@ -12,6 +13,7 @@ import com.example.robotops.infra.kafka.producer.KafkaProducer;
 import com.example.robotops.infra.openai.AiSummaryResponse;
 import com.example.robotops.infra.openai.OpenAiClient;
 import com.example.robotops.infra.redis.JsonUtil;
+import com.example.robotops.infra.slack.SlackNotifier;
 import com.example.robotops.infra.websocket.WebsocketService;
 import com.example.robotops.observability.InsightFeedCycleTracker;
 import com.example.robotops.observability.RobotOpsGrafanaMetrics;
@@ -43,6 +45,19 @@ public class InsightAiConsumer {
     private final KafkaProducer kafkaProducer;
     private final RobotOpsGrafanaMetrics metrics;
     private final InsightFeedCycleTracker cycleTracker;
+    private final SlackNotifier slackNotifier;
+    private final InsightFeedDltService insightFeedDltService;
+
+    private static String previewMessage(String message, int maxLength) {
+        if (message == null) {
+            return "(empty)";
+        }
+        String normalized = message.replace('\n', ' ').trim();
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, maxLength) + "...";
+    }
 
     @KafkaListener(topics = "robot.device.feed.detect", groupId = "all")
     public void detectInsight(String message) {
@@ -107,6 +122,23 @@ public class InsightAiConsumer {
                 "AI message moved to DLT. originalTopic={}, message={}",
                 originalTopic,
                 message
+        );
+
+        var saved = insightFeedDltService.save(originalTopic, message);
+
+        slackNotifier.sendAsync(
+                """
+                :rotating_light: *Insight feed moved to DLT*
+                • DLT ID: `%d`
+                • Topic: `%s`
+                • Robot: `%s`
+                • Message: `%s`
+                """.formatted(
+                        saved.id(),
+                        originalTopic,
+                        saved.robotId() != null ? saved.robotId() : "unknown",
+                        previewMessage(message, 200)
+                ).trim()
         );
     }
 
