@@ -8,7 +8,6 @@ import com.example.robotops.domain.response.RedisEventResponse;
 import com.example.robotops.global.errorMessage.StringEnum;
 import com.example.robotops.infra.kafka.producer.KafkaProducer;
 import com.example.robotops.infra.redis.RedisService;
-import jakarta.transaction.Transactional;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -18,6 +17,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Slf4j
 @Service
@@ -30,18 +31,21 @@ public class DeviceEventService {
 
     @Transactional
     public void process(DeviceEvent deviceEvent) {
-
-        if (!redisService.tryAcquire(deviceEvent)) {
+        if (!redisService.acquireEventDedup(deviceEvent)) {
             return;
         }
+       // DB 트랜잭션 안에서만 실행
+        TransactionSynchronizationManager.registerSynchronization(
+                new DeviceEventProcessSynchronization(
+                        deviceEvent,
+                        redisService,
+                        kafkaProducer
+                )
+        );
+
         deviceEventRepository.save(deviceEvent);
-
-//        log.info("[DB] Device event insert = {}", deviceEvent.getDeviceId());
-
-        // ws
-        kafkaProducer.sendAllEvents(deviceEvent.getDeviceId());
-
-
+        // DB 저장
+            deviceEventRepository.save(deviceEvent);
     }
 
     public List<RedisEventResponse> getOffLineDevices() {

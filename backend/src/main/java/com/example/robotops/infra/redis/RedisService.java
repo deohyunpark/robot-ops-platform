@@ -21,11 +21,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
 public class RedisService {
+
+    private static final Duration EVENT_DEDUP_TTL = Duration.ofMinutes(5);
 
     private final StringRedisTemplate stringRedisTemplate;
     private final JsonUtil jsonUtil;
@@ -142,25 +145,70 @@ public class RedisService {
     public void updateEvent(DeviceEvent deviceEvent) {
         String key = RedisKey.DEVICE_EVENT.key(deviceEvent.getDeviceId(), deviceEvent.getEventType().name());
 
-        stringRedisTemplate.opsForValue().setIfAbsent(key, "1", Duration.ofMinutes(5));
+        stringRedisTemplate.opsForValue().setIfAbsent(key, "1", EVENT_DEDUP_TTL);
     }
 
-    public boolean tryAcquire(DeviceEvent event) {
-        String key = RedisKey.DEVICE_EVENT.key(
+    /**
+     * deviceId + eventType dedup 키
+     */
+    public boolean acquireEventDedup(DeviceEvent event) {
+        String dedupKey = RedisKey.DEVICE_EVENT.key(
                 event.getDeviceId(),
                 event.getEventType().name()
         );
 
-        // 이벤트 리스트 저장
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>(
+                """
+                if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) then
+                  return 1
+                end
+                return 0
+                """,
+                Long.class
+        );
+
+        Long result = stringRedisTemplate.execute(
+                script,
+                List.of(dedupKey),
+                String.valueOf(EVENT_DEDUP_TTL.getSeconds())
+        );
+
+        return Long.valueOf(1L).equals(result);
+    }
+
+    // DB 트랜잭션 롤백 시 redis 제거
+    public void releaseEventDedup(DeviceEvent event) {
+        stringRedisTemplate.delete(
+                RedisKey.DEVICE_EVENT.key(
+                        event.getDeviceId(),
+                        event.getEventType().name()
+                )
+        );
+    }
+
+    // DB 커밋 이후에 redis 저장
+    public void registerEventInFeed(DeviceEvent event) {
         String allDeviceKey = RedisKey.ALL_DEVICE_EVENT.key();
-        String allDeviceValue = event.getDeviceId() + ":" + event.getEventType().name() + ":" + event.getSeverity().name();
+        String allDeviceValue = event.getDeviceId()
+                + ":"
+                + event.getEventType().name()
+                + ":"
+                + event.getSeverity().name();
 
-        stringRedisTemplate.opsForZSet().add(allDeviceKey, allDeviceValue, OffsetDateTime.now().toInstant().toEpochMilli());
+        stringRedisTemplate.opsForZSet().add(
+                allDeviceKey,
+                allDeviceValue,
+                OffsetDateTime.now().toInstant().toEpochMilli()
+        );
+    }
 
-        Boolean success = stringRedisTemplate.opsForValue()
-                .setIfAbsent(key, "1");
-
-        return Boolean.TRUE.equals(success);
+    @Deprecated
+    public boolean tryAcquire(DeviceEvent event) {
+        if (!acquireEventDedup(event)) {
+            return false;
+        }
+        registerEventInFeed(event);
+        return true;
     }
 
     public void deleteEventInList(DeviceEvent deviceEvent) {
