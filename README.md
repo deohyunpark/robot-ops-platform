@@ -331,9 +331,9 @@ DeviceEventConsumer
 
 DeviceEventDetectConsumer
   → DeviceEventService.process()
-      → RedisService.tryAcquire()        # 중복 이벤트 방지
-      → DeviceEventRepository.save()   # PostgreSQL
-      → KafkaProducer.sendAllEvents()
+      → RedisService.acquireEventDedup()   # 중복 이벤트 방지 (SET NX EX)
+      → DeviceEventRepository.save()     # PostgreSQL (@Transactional)
+      → afterCommit: registerEventInFeed() + sendAllEvents()
   → Kafka [robot.device.events]
 
 DashBoardConsumer
@@ -775,6 +775,508 @@ Consumer Group / Partition 확인
 
 </details>
 
+<br>
+<div align="center">
+
+**Kafka 잔여 메시지로 종료된 Demo의 AI Feed가 노출되는 문제 → Demo Epoch 기반 Stale Message 차단**
+
+</div>
+
+<details>
+<summary><b>상세 트러블슈팅 과정 보기</b></summary>
+
+<br>
+
+#### 1. 문제 상황 — Demo를 종료했는데 AI Feed는 계속 생성됨
+
+Robot Ops Platform에서는 사용자가 Demo를 시작하면 Simulator가 로봇 Telemetry를 발행하고,
+Kafka 기반 Insight Pipeline을 통해 이상 징후를 분석한 뒤 OpenAI 분석 결과를 화면에 전달합니다.
+
+```text
+Demo START
+    ↓
+Simulator
+    ↓ MQTT
+Telemetry
+    ↓
+Kafka
+    ↓
+Insight Detection
+    ↓
+OpenAI Analysis
+    ↓
+DB Save / WebSocket
+    ↓
+AI Insight Feed
+```
+
+Demo 종료 시에는 Simulator의 Telemetry 발행을 중단하고,
+Redis 및 Demo 데이터를 초기화하도록 구성했습니다.
+
+따라서 처음에는 새로운 Telemetry 발행이 중단되면
+AI Insight Feed 생성 역시 자연스럽게 종료될 것으로 예상했습니다.
+
+하지만 실제 테스트에서는 **Demo STOP 이후에도 일정 시간 동안 이전 Demo의 AI Feed가 계속 화면에 나타나는 문제**가 발생했습니다.
+
+```text
+Demo STOP
+    ↓
+Simulator 발행 중단
+    ↓
+새로운 Telemetry는 더 이상 발생하지 않음
+
+하지만...
+
+Kafka Topic
+├─ 이미 발행된 Message
+├─ Consumer 대기 Message
+└─ OpenAI 처리 중인 Message
+        ↓
+     OpenAI
+        ↓
+     DB Save
+        ↓
+    WebSocket
+        ↓
+종료된 Demo의 AI Feed가 계속 노출 ❌
+```
+
+<div align="center">
+  <img src="./docs/images/epochb.gif" width="800">
+</div>
+
+즉, **Producer의 발행 중단과 이미 비동기 파이프라인에 진입한 메시지의 처리는 별개의 문제**였습니다.
+
+---
+
+#### 2. 원인 분석 — Demo와 Kafka Message의 생명주기가 분리되어 있음
+
+기존 구조에서는 Demo 실행 여부를 Redis의 상태 값으로 관리하고 있었습니다.
+
+```text
+Demo START
+    ↓
+demo:simulation:status = RUNNING
+
+Demo STOP
+    ↓
+demo:simulation:status 삭제
+```
+
+이 값은 Simulator가 새로운 Telemetry를 발행할지 결정하는 데에는 사용할 수 있었지만,
+이미 Kafka Topic에 들어간 메시지에는 **어느 Demo 실행에서 생성된 데이터인지 식별할 정보가 존재하지 않았습니다.**
+
+예를 들어 첫 번째 Demo에서 다음 메시지가 Kafka에 쌓인 상태에서 Demo가 종료되더라도,
+
+```text
+Demo #1
+
+Kafka Topic
+├─ Message A
+├─ Message B
+├─ Message C
+└─ Message D
+```
+
+Consumer 입장에서는 각각의 메시지가
+
+```text
+현재 실행 중인 Demo의 메시지인지
+            or
+이미 종료된 Demo의 메시지인지
+```
+
+판단할 기준이 없었습니다.
+
+단순히 Consumer에서 현재 `RUNNING` 상태만 확인하는 방법도 고려할 수 있지만,
+이 방식에는 또 다른 문제가 있었습니다.
+
+```text
+Demo #1 STOP
+    ↓
+Kafka에 Demo #1 메시지 잔존
+    ↓
+Demo #2 START
+    ↓
+status = RUNNING
+```
+
+이 시점에는 다시 `RUNNING` 상태이므로,
+**이전 Demo에서 남아 있던 메시지까지 현재 Demo의 메시지처럼 처리될 수 있습니다.**
+
+따라서 단순한 실행 여부가 아니라
+
+> **"이 메시지가 현재 실행 중인 Demo Session에서 생성된 메시지인가?"**
+
+를 판단할 수 있는 식별자가 필요하다고 판단했습니다.
+
+---
+
+#### 3. 해결 방향 — Kafka Topic을 비우는 대신 메시지의 유효성을 판단
+
+처음 문제만 보면 Demo 종료 시 Kafka Topic에 남은 메시지를 삭제하는 방법을 생각할 수 있습니다.
+
+하지만 Kafka Topic 자체를 Demo Session의 상태에 맞춰 물리적으로 비우는 것보다,
+이미 발행된 메시지는 그대로 두고 **Consumer가 메시지의 유효성을 판단하도록 만드는 방식**을 선택했습니다.
+
+이를 위해 Redis에 현재 Demo Session을 나타내는 `epoch` 값을 추가했습니다.
+
+```text
+demo:session:currentEpoch
+```
+
+Demo를 시작할 때 Redis의 Epoch을 증가시키고,
+해당 시점의 Epoch을 이번 Demo Session의 식별자로 사용합니다.
+
+```text
+Demo START
+    ↓
+INCR demo:session:currentEpoch
+    ↓
+currentEpoch = 1
+    ↓
+Simulator가 생성하는 메시지에
+demoEpoch = 1 포함
+```
+
+Telemetry부터 AI 분석 결과까지 비동기 Pipeline을 따라 이동하는 메시지에
+동일한 `demoEpoch`을 전달하도록 변경했습니다.
+
+```text
+Telemetry
+  demoEpoch = 1
+       ↓
+Insight Detection
+  demoEpoch = 1
+       ↓
+AI Request
+  demoEpoch = 1
+       ↓
+AI Analysis
+  demoEpoch = 1
+```
+
+이를 통해 Consumer가 메시지를 받았을 때
+현재 Redis Epoch과 메시지가 생성된 Epoch을 비교할 수 있게 되었습니다.
+
+---
+
+#### 4. Demo STOP — Epoch 변경으로 이전 Session 메시지 전체 무효화
+
+Demo가 종료될 때 Kafka 메시지를 직접 삭제하는 대신
+Redis의 `currentEpoch`을 다시 증가시킵니다.
+
+```text
+[Demo 실행 중]
+
+currentEpoch = 1
+
+Kafka Topic
+├─ epoch=1
+├─ epoch=1
+└─ epoch=1
+
+
+[Demo STOP]
+
+INCR currentEpoch
+        ↓
+currentEpoch = 2
+
+
+Kafka Topic
+├─ epoch=1 → ❌ STALE → SKIP
+├─ epoch=1 → ❌ STALE → SKIP
+└─ epoch=1 → ❌ STALE → SKIP
+```
+
+Consumer에서는 메시지의 `demoEpoch`과
+현재 Redis의 `currentEpoch`이 일치하는지 검증합니다.
+
+```java
+public boolean isActiveEpoch(String messageEpoch) {
+    if (messageEpoch == null || messageEpoch.isBlank()) {
+        return false;
+    }
+
+    return messageEpoch.equals(getCurrentEpoch());
+}
+```
+
+```text
+messageEpoch == currentEpoch
+        ↓
+      처리 ✅
+
+messageEpoch != currentEpoch
+        ↓
+   STALE MESSAGE
+        ↓
+      SKIP ❌
+```
+
+이 방식에서는 Kafka Topic에 이전 메시지가 물리적으로 남아 있어도
+Consumer가 현재 Demo Session에 속하지 않는 메시지를 처리하지 않습니다.
+
+---
+
+#### 5. 새로운 Demo 시작 시 이전 메시지가 섞이는 문제도 차단
+
+Epoch은 Demo 종료 시 삭제하지 않고 유지합니다.
+
+Demo가 다시 시작되면 Epoch을 다시 증가시켜
+새로운 Session을 생성합니다.
+
+| 이벤트 | currentEpoch | 메시지 Epoch | 처리 |
+|---|---:|---:|---|
+| 1차 Demo START | 1 | 1 | ✅ 처리 |
+| 1차 Demo STOP | **2** | 1 | ❌ SKIP |
+| 2차 Demo START | **3** | 3 | ✅ 처리 |
+
+따라서 두 번째 Demo가 시작된 이후에도 Kafka에 첫 번째 Demo의 메시지가 남아 있다면,
+
+```text
+currentEpoch = 3
+
+Kafka Topic
+├─ epoch=1 → ❌ 이전 Demo → SKIP
+├─ epoch=1 → ❌ 이전 Demo → SKIP
+├─ epoch=3 → ✅ 현재 Demo → PROCESS
+└─ epoch=3 → ✅ 현재 Demo → PROCESS
+```
+
+처럼 Session을 구분할 수 있습니다.
+
+즉, 단순한 `RUNNING / STOP` 상태 확인과 달리
+**Demo를 다시 시작하더라도 이전 Session의 메시지가 새로운 Session에 섞이지 않도록 격리**할 수 있습니다.
+
+---
+
+#### 6. 추가 문제 — OpenAI 호출 중 Demo가 종료되는 In-flight Request
+
+Kafka Consumer 진입 시 Epoch을 검증하는 것만으로는 문제를 완전히 해결할 수 없었습니다.
+
+OpenAI 분석은 한 건당 약 6~7초가 소요되기 때문에 다음 Race Condition이 발생할 수 있습니다.
+
+```text
+Consumer
+    ↓
+Epoch Check
+1 == 1 ✅
+    ↓
+OpenAI Request 시작
+    ↓
+    │
+    │   약 6~7초 처리
+    │
+    ├──── Demo STOP
+    │
+    │     currentEpoch
+    │       1 → 2
+    │
+    ↓
+OpenAI Response
+    ↓
+Analysis Topic Publish
+    ↓
+DB / WebSocket ❌
+```
+
+OpenAI 호출 직전에는 정상적인 메시지였기 때문에 첫 번째 Epoch 검증을 통과하지만,
+**OpenAI 응답을 기다리는 동안 Demo가 종료되면 해당 결과는 더 이상 유효하지 않습니다.**
+
+따라서 OpenAI 호출 전뿐만 아니라 **응답을 받은 이후에도 Epoch을 다시 검증**하도록 변경했습니다.
+
+```text
+Kafka Consumer
+      ↓
+[1] Epoch Check
+      ↓
+OpenAI Request
+      ↓
+OpenAI Response
+      ↓
+[2] Epoch Re-check
+      ↓
+현재 Session?
+   ↙       ↘
+ YES        NO
+  ↓          ↓
+Publish     SKIP
+```
+
+이를 통해 이미 시작된 OpenAI HTTP 요청 자체를 취소하지 못하더라도,
+**종료된 Session에서 시작된 분석 결과가 후속 Pipeline으로 전파되는 것은 차단**할 수 있도록 했습니다.
+
+또한 첫 번째 Epoch 검증에서 이전 Session 메시지를 걸러내기 때문에
+아직 OpenAI 호출을 시작하지 않은 Stale Message에 대해서는 불필요한 API 호출 자체도 방지할 수 있습니다.
+
+---
+
+#### 7. Pipeline 각 단계에서 Epoch 검증
+
+AI Insight Feed는 하나의 Consumer에서 모든 처리를 완료하는 구조가 아니라
+여러 Kafka Topic과 Consumer를 거쳐 처리됩니다.
+
+따라서 OpenAI Consumer에서만 Epoch을 확인하는 대신,
+**외부 Side Effect가 발생하는 주요 단계에서도 현재 Session 여부를 검증**하도록 구성했습니다.
+
+최종 처리 흐름은 다음과 같습니다.
+
+```text
+[Demo RUNNING / epoch=1]
+
+Simulator MQTT
+  demoEpoch = 1
+        ↓
+Telemetry / Kafka
+        ↓
+feed.detect Consumer
+  [Epoch ✅]
+        ↓
+InsightAnalyzer
+        ↓
+AiPublishService
+        ↓
+robot.device.feed
+        ↓
+OpenAI Consumer
+  [Epoch ✅]
+        ↓
+OpenAI Request
+        ↓
+OpenAI Response
+        ↓
+  [Epoch Re-check ✅]
+        ↓
+robot.device.feed.analysis
+       ↙             ↘
+      ↓               ↓
+DB Consumer        WS Consumer
+[Epoch ✅]          [Epoch ✅]
+      ↓               ↓
+    SAVE           BROADCAST
+
+
+──────────── Demo STOP ────────────
+
+currentEpoch
+     1 → 2
+
+Kafka에 남아 있는 epoch=1 메시지
+             ↓
+      ❌ STALE MESSAGE
+             ↓
+           SKIP
+```
+
+이를 통해 Stale Message가 Pipeline 어느 구간에 남아 있더라도
+
+- OpenAI 호출 전
+- OpenAI 응답 후
+- DB 저장 전
+- WebSocket Broadcast 전
+
+현재 Demo Session인지 확인하도록 방어했습니다.
+
+---
+
+#### 8. 개선 결과
+
+| 지표 | 개선 전 | 개선 후 |
+|---|---|---|
+| Demo 종료 후 Kafka 잔여 메시지 | 계속 후속 처리 | **Epoch 불일치 시 SKIP** |
+| 종료 후 대기 중인 AI 요청 | OpenAI 호출 발생 | **호출 전 Stale Message 차단** |
+| 처리 중인 OpenAI 요청 | 응답 후 Feed 생성 가능 | **응답 후 재검증하여 결과 폐기** |
+| DB 저장 | 이전 Demo 결과 저장 가능 | **저장 전 Epoch 검증** |
+| WebSocket | 종료 후 Feed 노출 가능 | **Broadcast 전 Epoch 검증** |
+| Demo 재시작 | 이전/현재 메시지 구분 불가 | **Session 단위 메시지 격리** |
+
+최종적으로 Kafka Topic에 메시지를 직접 삭제하지 않고,
+**메시지에 Demo Session의 생명주기를 함께 전달하여 Consumer가 유효성을 판단하는 구조**로 변경했습니다.
+
+<div align="center">
+  <img src="./docs/images/epocha.gif" width="800">
+</div>
+
+```text
+Before
+
+Demo STOP
+    ↓
+Producer STOP
+    ↓
+Kafka 잔여 메시지
+    ↓
+OpenAI
+    ↓
+DB / WebSocket
+    ↓
+종료 후에도 Feed 노출 ❌
+
+
+After
+
+Demo STOP
+    ↓
+Epoch 변경
+    ↓
+Kafka 잔여 메시지
+    ↓
+Epoch Validation
+    ↓
+STALE → SKIP ✅
+```
+
+---
+
+#### 9. 배운 점
+
+처음에는 Demo를 종료하면서 Simulator의 메시지 발행을 중단하면
+전체 Pipeline 역시 자연스럽게 멈출 것이라고 생각했습니다.
+
+하지만 Kafka 기반 비동기 구조에서는 **Producer의 생명주기와 이미 발행된 메시지의 생명주기가 서로 다르기 때문에**,
+Producer를 중단하는 것만으로 이미 Pipeline에 들어간 작업까지 중단되는 것은 아니었습니다.
+
+또한 단순히 현재 Demo가 `RUNNING`인지 확인하는 것만으로는
+Demo 재시작 시 이전 Session의 메시지와 새로운 Session의 메시지를 구분할 수 없다는 점도 확인했습니다.
+
+이를 해결하기 위해 Demo Session 자체에 Epoch을 부여하고
+메시지가 생성된 Session 정보를 Kafka Pipeline 전체에 전달하여,
+
+> **"메시지가 존재하는가?"가 아니라 "현재 시점에도 이 메시지가 유효한가?"**
+
+를 Consumer가 판단하도록 변경했습니다.
+
+특히 OpenAI와 같이 처리 시간이 긴 외부 API가 포함된 비동기 Pipeline에서는
+Consumer 진입 시점에 유효했던 작업도 처리 도중 상태가 변경될 수 있기 때문에,
+**Side Effect 발생 직전 다시 유효성을 확인하는 과정이 필요하다**는 점을 확인했습니다.
+
+이번 트러블슈팅을 통해 다음과 같이 문제를 확장해서 추적하는 경험을 할 수 있었습니다.
+
+```text
+Demo 종료 후 Feed 발생
+        ↓
+Kafka 잔여 메시지 확인
+        ↓
+RUNNING 여부만으로는 Session 구분 불가
+        ↓
+Demo Epoch 도입
+        ↓
+Consumer 진입 시 Stale Message 차단
+        ↓
+In-flight OpenAI Race Condition 발견
+        ↓
+응답 후 Epoch 재검증
+        ↓
+DB / WebSocket Side Effect까지 방어
+```
+
+결과적으로 Kafka Topic 자체를 제어하는 방식이 아니라,
+**Application Level에서 메시지의 유효 기간과 Session 경계를 명시적으로 관리하는 방식**으로 문제를 해결했습니다.
+
+</details>
+
 <div align="center">
 
 ### Redis
@@ -1008,6 +1510,407 @@ AVG / P95 / MAX 비교
     ↓
 규모에 따른 Pipeline 효과 확인
 ```
+
+</details>
+
+<div align="center">
+
+**DeviceEvent `process()` — Redis·DB 원자성 문제 → TransactionSynchronization 기반 Side Effect 지연**
+
+</div>
+
+<details>
+<summary><b>상세 트러블슈팅 과정 보기</b></summary>
+
+<br>
+
+#### 1. 문제 상황 — Redis Feed에는 있는데 DB에는 없는 이벤트
+
+Robot Ops Platform에서는 Telemetry 기반 Rule Engine이 이상 징후를 감지하면
+`DeviceEvent`를 생성하고, DB에 영속화한 뒤 Redis Feed와 WebSocket으로 대시보드에 노출합니다.
+
+```text
+Telemetry / Kafka
+    ↓
+EventEngine (Rule Check)
+    ↓
+robot.device.event.detected
+    ↓
+DeviceEventService.process()
+    ↓
+Redis Feed (device:events)
+    ↓
+DB Save
+    ↓
+Kafka (robot.device.events)
+    ↓
+WebSocket Broadcast
+    ↓
+Dashboard Event Feed
+```
+
+`process()`는 **동일 deviceId + eventType 조합의 중복 이벤트를 막기 위해** Redis dedup 키를 사용하고,
+대시보드 실시간 Feed를 위해 Redis ZSet(`device:events`)에 이벤트를 등록합니다.
+
+처음에는 “Redis dedup → DB save → Kafka publish” 순서만 맞추면
+Redis와 DB 상태가 자연스럽게 일치할 것으로 예상했습니다.
+
+하지만 DB 저장 실패나 트랜잭션 롤백이 발생하는 경우,
+**Redis Feed에는 이미 이벤트가 올라가 있는데 DB에는 기록이 없는 상태**가 발생할 수 있었습니다.
+
+```text
+process() 호출
+    ↓
+Redis Feed 등록 ✅
+    ↓
+Redis dedup 획득 ✅
+    ↓
+DB Save ❌ (실패 / 롤백)
+
+결과
+├─ Dashboard Feed → 이벤트 노출 ❌
+├─ DB → 기록 없음 ❌
+└─ dedup 키 → 남아 있음 → 재시도 차단 ❌
+```
+
+즉, **Redis Side Effect가 DB 커밋보다 먼저 발생**하면서
+두 저장소의 생명주기가 어긋나는 문제였습니다.
+
+---
+
+#### 2. 원인 분석 — `tryAcquire()`의 순서와 보상(Compensation) 부재
+
+기존 `process()`는 `RedisService.tryAcquire()` 한 번으로 dedup과 Feed 등록을 함께 처리했습니다.
+
+```java
+@Transactional
+public void process(DeviceEvent deviceEvent) {
+    if (!redisService.tryAcquire(deviceEvent)) {
+        return;
+    }
+    deviceEventRepository.save(deviceEvent);
+    kafkaProducer.sendAllEvents(deviceEvent.getDeviceId());
+}
+```
+
+`tryAcquire()` 내부는 다음 순서였습니다.
+
+```text
+[기존 tryAcquire()]
+
+1. ZADD device:events        ← Feed 먼저 등록
+2. SETNX device:{id}:event:{type}   ← dedup은 그 다음
+3. TTL 없음
+```
+
+이 구조에는 세 가지 문제가 있었습니다.
+
+**① Feed가 dedup 성공 여부와 무관하게 먼저 등록됨**
+
+```text
+Event A
+  ↓
+ZADD Feed ✅
+  ↓
+SETNX dedup ❌ (이미 존재)
+
+→ Feed에는 들어갔지만 dedup은 실패
+→ process()는 early return
+→ DB/Kafka 처리 없음
+```
+
+**② DB 실패 시 Redis를 되돌릴 방법이 없음**
+
+```text
+ZADD Feed ✅
+SETNX dedup ✅
+    ↓
+DB Save ❌
+
+→ Feed + dedup은 그대로
+→ DB만 비어 있음
+→ 같은 이벤트 재시도도 dedup에 막힘
+```
+
+**③ dedup 키에 TTL이 없음**
+
+한 번 SETNX에 성공한 키는 명시적으로 삭제하지 않는 한 계속 남습니다.
+DB 저장이 실패했을 때 dedup만 남아 있으면, **정상 이벤트도 영구적으로 재처리 불가**해질 수 있습니다.
+
+정리하면, 문제의 본질은 단순 “Redis와 DB를 같이 쓴다”가 아니라
+
+> **Side Effect(Redis Feed, Kafka)가 DB 커밋 전에 발생하고, 실패 시 되돌릴 보상 로직이 없었다**
+
+는 점이었습니다.
+
+---
+
+#### 3. 해결 방향 — dedup / Feed / Kafka 역할 분리 + 커밋 이후 Side Effect
+
+Redis와 DB를 하나의 2PC 트랜잭션으로 묶는 대신,
+**각 단계의 책임을 분리하고 DB 커밋 시점에 Side Effect를 지연**하는 방식을 선택했습니다.
+
+```text
+Before                          After
+
+tryAcquire()                    acquireEventDedup()   ← dedup만
+  ├─ ZADD Feed                    registerEventInFeed() ← commit 후
+  └─ SETNX dedup                  sendAllEvents()       ← commit 후
+        ↓                               ↓
+   DB Save                         DB Save (@Transactional)
+        ↓                               ↓
+   Kafka 즉시 발행                  afterCommit → Feed + Kafka
+                                   afterCompletion(ROLLBACK) → dedup 해제
+```
+
+핵심 원칙은 다음과 같습니다.
+
+| 단계 | 시점 | 역할 |
+|---|---|---|
+| `acquireEventDedup()` | DB 저장 **전** | 중복 이벤트 선제 차단 |
+| `deviceEventRepository.save()` | 트랜잭션 내부 | DB 영속화 |
+| `registerEventInFeed()` | **afterCommit** | Feed 등록 |
+| `sendAllEvents()` | **afterCommit** | WebSocket 갱신 트리거 |
+| `releaseEventDedup()` | **rollback 시** | dedup 키 보상 삭제 |
+
+---
+
+#### 4. Step 1 — `acquireEventDedup()` : dedup만 담당 + TTL 부여
+
+Feed 등록을 분리하고, dedup 키 획득만 Lua 스크립트로 원자적으로 처리합니다.
+
+```java
+public boolean acquireEventDedup(DeviceEvent event) {
+    // SET key 1 NX EX 300
+    if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) then
+      return 1
+    end
+    return 0
+}
+```
+
+```text
+device:{deviceId}:event:{eventType}
+    ↓
+SET NX EX 300 (5분 TTL)
+    ↓
+성공 → dedup 획득 ✅
+실패 → 중복 이벤트 → process() 종료
+```
+
+TTL(5분)을 두어 dedup 키가 영구 잔존하지 않도록 했고,
+**Feed(ZADD)는 이 단계에서 더 이상 건드리지 않습니다.**
+
+---
+
+#### 5. Step 2 — `TransactionSynchronization`으로 Side Effect 지연
+
+`process()`는 `@Transactional`로 DB 저장을 감싸고,
+Spring `TransactionSynchronization`을 등록해 커밋/롤백 이후 동작을 분리합니다.
+
+```java
+@Transactional
+public void process(DeviceEvent deviceEvent) {
+    if (!redisService.acquireEventDedup(deviceEvent)) {
+        return;
+    }
+
+    TransactionSynchronizationManager.registerSynchronization(
+        new DeviceEventProcessSynchronization(deviceEvent, redisService, kafkaProducer)
+    );
+
+    deviceEventRepository.save(deviceEvent);
+}
+```
+
+`DeviceEventProcessSynchronization`은 두 hook만 담당합니다.
+
+```java
+@Override
+public void afterCommit() {
+    redisService.registerEventInFeed(deviceEvent);
+    kafkaProducer.sendAllEvents(deviceEvent.getDeviceId());
+}
+
+@Override
+public void afterCompletion(int status) {
+    if (status == STATUS_ROLLED_BACK) {
+        redisService.releaseEventDedup(deviceEvent);
+    }
+}
+```
+
+```text
+[정상 흐름]
+
+acquireEventDedup ✅
+    ↓
+DB Save
+    ↓
+COMMIT ✅
+    ↓
+afterCommit
+  ├─ registerEventInFeed()
+  └─ sendAllEvents()
+
+
+[실패 흐름]
+
+acquireEventDedup ✅
+    ↓
+DB Save ❌
+    ↓
+ROLLBACK
+    ↓
+afterCompletion
+  └─ releaseEventDedup()   ← dedup 키 삭제, 재시도 가능
+```
+
+DB가 실제로 커밋된 경우에만 Feed/Kafka가 실행되므로,
+**“Redis에는 보이는데 DB에는 없다”** 상태를 원천적으로 막을 수 있습니다.
+
+---
+
+#### 6. Race Condition — 동시에 같은 이벤트가 들어오는 경우
+
+Kafka Consumer는 동일 이벤트가 짧은 시간 안에 여러 번 들어올 수 있습니다.
+
+```text
+Consumer A                    Consumer B
+    ↓                             ↓
+acquireEventDedup ✅          acquireEventDedup ❌
+    ↓                             ↓
+DB Save                       SKIP
+afterCommit → Feed + Kafka
+```
+
+dedup은 `SET NX` 기반이므로 **동시 요청 중 하나만 DB까지 진행**합니다.
+Feed 등록이 commit 이후로 밀리면서, dedup 실패한 요청이 Feed를 오염시키는 문제도 함께 사라집니다.
+
+---
+
+#### 7. 최종 처리 흐름
+
+```text
+robot.device.event.detected
+        ↓
+DeviceEventService.process()
+        ↓
+[1] acquireEventDedup()
+   SET NX EX (device:{id}:event:{type})
+        ↓
+   중복? ──YES──→ SKIP
+        │
+       NO
+        ↓
+[2] registerSynchronization()
+        ↓
+[3] deviceEventRepository.save()
+        ↓
+   ┌─────┴─────┐
+ COMMIT     ROLLBACK
+   ↓            ↓
+afterCommit   afterCompletion
+   ↓            ↓
+registerEventInFeed()   releaseEventDedup()
+sendAllEvents()              ↓
+   ↓                      재시도 가능
+robot.device.events
+   ↓
+WebSocket Broadcast
+   ↓
+Dashboard Event Feed
+```
+
+Side Effect가 발생하는 지점마다 DB 커밋 여부와 맞춰 두었습니다.
+
+- **Feed 등록** → commit 이후
+- **Kafka publish** → commit 이후
+- **dedup 해제** → rollback 시에만
+
+---
+
+#### 8. 개선 결과
+
+| 지표 | 개선 전 (`tryAcquire`) | 개선 후 |
+|---|---|---|
+| Feed 등록 시점 | dedup **전** (ZADD 선행) | **DB commit 후** |
+| dedup 키 TTL | 없음 (영구 잔존 가능) | **5분 TTL** |
+| DB 저장 실패 시 Feed | Feed에 **이미 등록됨** | **등록되지 않음** |
+| DB 저장 실패 시 dedup | 키 **남음** → 재시도 불가 | **rollback 시 삭제** |
+| Kafka 발행 시점 | save 직후 (commit 보장 X) | **afterCommit** |
+| 동시 중복 요청 | Feed **중복 등록 가능** | dedup 선행 → **1건만 처리** |
+
+최종적으로 Redis와 DB를 하나의 트랜잭션으로 묶지 않고,
+**DB 커밋을 기준점으로 Side Effect 시점을 재배치**하는 구조로 변경했습니다.
+
+```text
+Before
+
+tryAcquire()
+  ZADD → SETNX
+    ↓
+DB Save (실패 가능)
+    ↓
+Feed / dedup 이미 반영 ❌
+
+
+After
+
+acquireEventDedup()
+    ↓
+DB Save
+    ↓
+COMMIT?
+  YES → Feed + Kafka ✅
+  NO  → dedup release ✅
+```
+
+---
+
+#### 9. 배운 점
+
+처음에는 Redis dedup과 DB insert만 같은 `process()` 메서드 안에 넣으면
+“사실상 원자적”으로 동작할 것이라고 생각했습니다.
+
+하지만 Redis는 DB 트랜잭션에 자동으로 참여하지 않기 때문에,
+**같은 메서드에 있어도 커밋 시점과 Side Effect 시점은 별개**였습니다.
+
+특히 `tryAcquire()`처럼 Feed 등록과 dedup을 한 함수에 묶고,
+Feed를 dedup 성공 여부보다 먼저 실행하면
+
+> **“중복 방지 로직”이 오히려 Feed 오염과 재시도 불가를 만들 수 있다**
+
+는 점을 확인했습니다.
+
+이를 해결하기 위해
+
+1. dedup / Feed / Kafka **역할 분리**
+2. dedup은 DB **전**, Feed·Kafka는 **commit 후**
+3. rollback 시 dedup **보상 삭제**
+
+로 정리했습니다.
+
+Redis + RDB 조합에서는 2PC 없이도
+**“언제 Side Effect를 발생시킬 것인가”**를 명시적으로 설계하는 것이 중요하다는 걸 이번 작업에서 확인했습니다.
+
+```text
+Feed에 보이는데 DB에 없음
+        ↓
+tryAcquire() ZADD 선행 확인
+        ↓
+dedup / Feed / Kafka 분리
+        ↓
+TransactionSynchronization 도입
+        ↓
+afterCommit / rollback compensation
+        ↓
+Redis·DB 상태 일치 ✅
+```
+
+> **“같은 함수 안에 있으면 원자적이다”가 아니라,  
+> “Side Effect는 DB 커밋 이후에만 발생해야 한다”**  
+> 를 코드로 강제하는 것이 핵심이었습니다.
 
 </details>
 
