@@ -31,7 +31,12 @@ public class InsightAnalyzer {
         Integer calculated = riskCalculator.calculate(requests);
         // 생성된 AiAnalysis List kafka
 
-        return InsightFeedResponse.of(eventContext.tp().robotId(), requests, DeviceRiskResponse.from(calculated));
+        return InsightFeedResponse.of(
+                eventContext.tp().robotId(),
+                requests,
+                DeviceRiskResponse.from(calculated),
+                eventContext.tp().demoEpoch()
+        );
 
 
     }

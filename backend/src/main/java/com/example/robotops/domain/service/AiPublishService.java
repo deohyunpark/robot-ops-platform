@@ -19,8 +19,13 @@ public class AiPublishService {
     private final KafkaProducer kafkaProducer;
     private final RobotOpsGrafanaMetrics metrics;
     private final InsightFeedCycleTracker cycleTracker;
+    private final DemoSessionEpochService demoSessionEpochService;
 
     public void publishIfNeeded(InsightFeedResponse insightFeedResponse) {
+        if (!demoSessionEpochService.isActiveEpoch(insightFeedResponse.demoEpoch())) {
+            metrics.recordInsightFeedPublish("skipped_stale_epoch");
+            return;
+        }
 
         String aiSignature = redisService.updatePending(insightFeedResponse);
 

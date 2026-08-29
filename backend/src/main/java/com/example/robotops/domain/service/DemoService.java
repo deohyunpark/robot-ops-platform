@@ -44,6 +44,7 @@ public class DemoService {
     private final ActionCheckListItemRepository actionCheckListItemRepository;
     private final SlackNotifier slackNotifier;
     private final InsightFeedDltRepository insightFeedDltRepository;
+    private final DemoSessionEpochService demoSessionEpochService;
 
     private static final ZoneId DEMO_TIME_ZONE = ZoneId.of("Asia/Seoul");
     private static final DateTimeFormatter DEMO_TIME_FORMAT =
@@ -51,6 +52,7 @@ public class DemoService {
 
     public DemoSessionResponse start(Duration duration) {
         Instant expiresAt = Instant.now().plus(duration);
+        String sessionEpoch = demoSessionEpochService.beginSession();
 
         redisTemplate.opsForValue().set(
                 DEMO_STATUS_KEY,
@@ -67,9 +69,11 @@ public class DemoService {
         slackNotifier.sendAsync(
                 """
                 :robot_face: *Robot Ops demo started*
+                • Epoch: `%s`
                 • Duration: %d min
                 • Expires at: %s KST
                 """.formatted(
+                        sessionEpoch,
                         duration.toMinutes(),
                         DEMO_TIME_FORMAT.format(expiresAt.atZone(DEMO_TIME_ZONE))
                 ).trim()
@@ -83,7 +87,12 @@ public class DemoService {
 
     @Transactional
     public void stop() {
-        slackNotifier.sendAsync(":octagonal_sign: *Robot Ops demo stopped*");
+        String invalidatedEpoch = demoSessionEpochService.invalidateSession();
+
+        slackNotifier.sendAsync(
+                ":octagonal_sign: *Robot Ops demo stopped* (epoch invalidated → `%s`)"
+                        .formatted(invalidatedEpoch)
+        );
 
         // 1. 시뮬레이터 정지
         redisTemplate.delete(DEMO_STATUS_KEY);

@@ -7,14 +7,20 @@ import lombok.Builder;
 public record InsightFeedResponse(
         String robotId,
         List<DeviceInsightResponse> insightResponses,
-        DeviceRiskResponse riskResponse
+        DeviceRiskResponse riskResponse,
+        String demoEpoch
 ) {
-    public static InsightFeedResponse of(String robotId, List<DeviceInsightResponse> insightResponses,
-                                          DeviceRiskResponse riskResponse) {
+    public static InsightFeedResponse of(
+            String robotId,
+            List<DeviceInsightResponse> insightResponses,
+            DeviceRiskResponse riskResponse,
+            String demoEpoch
+    ) {
         return InsightFeedResponse.builder()
                 .robotId(robotId)
                 .insightResponses(insightResponses)
                 .riskResponse(riskResponse)
+                .demoEpoch(demoEpoch)
                 .build();
     }
 }

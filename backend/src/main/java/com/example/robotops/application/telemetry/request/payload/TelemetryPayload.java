@@ -6,6 +6,7 @@ public record TelemetryPayload(
         String ts,
         String robotId,
         Integer seq,
+        String demoEpoch,
         State state,
         Pose pose,
         Health health,

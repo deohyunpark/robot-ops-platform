@@ -5,6 +5,7 @@ import com.example.robotops.domain.request.AiAnalysisRequest;
 import com.example.robotops.domain.response.InsightFeedResponse;
 import com.example.robotops.domain.service.AiAnalysisService;
 import com.example.robotops.domain.service.AiPublishService;
+import com.example.robotops.domain.service.DemoSessionEpochService;
 import com.example.robotops.domain.service.InsightFeedDltService;
 import com.example.robotops.domain.service.event.EventContext;
 import com.example.robotops.domain.service.event.RedisSnapshotBuilder;
@@ -47,6 +48,7 @@ public class InsightAiConsumer {
     private final InsightFeedCycleTracker cycleTracker;
     private final SlackNotifier slackNotifier;
     private final InsightFeedDltService insightFeedDltService;
+    private final DemoSessionEpochService demoSessionEpochService;
 
     private static String previewMessage(String message, int maxLength) {
         if (message == null) {
@@ -59,12 +61,30 @@ public class InsightAiConsumer {
         return normalized.substring(0, maxLength) + "...";
     }
 
+    private boolean skipIfStaleEpoch(String messageEpoch, String stage) {
+        if (demoSessionEpochService.isActiveEpoch(messageEpoch)) {
+            return false;
+        }
+        log.debug(
+                "Skipping stale demo epoch at {}. messageEpoch={}, currentEpoch={}",
+                stage,
+                messageEpoch,
+                demoSessionEpochService.getCurrentEpoch()
+        );
+        return true;
+    }
+
     @KafkaListener(topics = "robot.device.feed.detect", groupId = "all")
     public void detectInsight(String message) {
-        // 피드 생성
         Timer.Sample sample = metrics.startInsightFeedDetect();
         try {
             TelemetryPayload telemetryPayload = jsonUtil.fromJson(message, TelemetryPayload.class);
+
+            if (skipIfStaleEpoch(telemetryPayload.demoEpoch(), "feed.detect")) {
+                metrics.stopInsightFeedDetect(sample, "stale_epoch");
+                return;
+            }
+
             EventContext eventContext = new EventContext(
                     telemetryPayload,
                     redisSnapshotBuilder.build(telemetryPayload)
@@ -102,7 +122,19 @@ public class InsightAiConsumer {
         Timer.Sample sample = metrics.startInsightOpenAiRequest();
         try {
             InsightFeedResponse insightFeedResponse = jsonUtil.fromJson(message, InsightFeedResponse.class);
+
+            if (skipIfStaleEpoch(insightFeedResponse.demoEpoch(), "openai.before")) {
+                metrics.stopInsightOpenAiRequest(sample, "stale_epoch");
+                return;
+            }
+
             AiSummaryResponse response = openAiClient.request(insightFeedResponse);
+
+            if (skipIfStaleEpoch(insightFeedResponse.demoEpoch(), "openai.after")) {
+                metrics.stopInsightOpenAiRequest(sample, "stale_epoch_after_openai");
+                return;
+            }
+
             kafkaProducer.createAiAnalysis(AiAnalysisRequest.of(insightFeedResponse, response));
             metrics.stopInsightOpenAiRequest(sample, "success");
         } catch (RuntimeException ex) {
@@ -147,6 +179,15 @@ public class InsightAiConsumer {
         Timer.Sample sample = metrics.startInsightAnalysisSave();
         try {
             AiAnalysisRequest aiAnalysisRequest = jsonUtil.fromJson(message, AiAnalysisRequest.class);
+
+            if (skipIfStaleEpoch(
+                    aiAnalysisRequest.insightFeedResponse().demoEpoch(),
+                    "analysis.save"
+            )) {
+                metrics.stopInsightAnalysisSave(sample, "stale_epoch");
+                return;
+            }
+
             aiAnalysisService.saveAiAnalysis(aiAnalysisRequest);
             metrics.stopInsightAnalysisSave(sample, "success");
         } catch (RuntimeException ex) {
@@ -159,6 +200,15 @@ public class InsightAiConsumer {
     public void sendAiAnalysis(String message) {
         Timer.Sample sample = metrics.startInsightWsBroadcast();
         AiAnalysisRequest aiAnalysisRequest = jsonUtil.fromJson(message, AiAnalysisRequest.class);
+
+        if (skipIfStaleEpoch(
+                aiAnalysisRequest.insightFeedResponse().demoEpoch(),
+                "analysis.ws"
+        )) {
+            metrics.stopInsightWsBroadcast(sample, "stale_epoch");
+            return;
+        }
+
         try {
             websocketService.broadcastInsightFeed(aiAnalysisRequest.aiSummaryResponse());
             cycleTracker.completeDelivered(aiAnalysisRequest.insightFeedResponse().robotId());

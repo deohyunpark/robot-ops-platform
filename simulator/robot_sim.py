@@ -15,6 +15,7 @@ import redis
 KST = timezone(timedelta(hours=9))
 
 DEMO_STATUS_KEY = "demo:simulation:status"
+DEMO_EPOCH_KEY = "demo:session:currentEpoch"
 DEMO_RUNNING = "RUNNING"
 
 COMMAND_CLEAR_EVENT = "CLEAR_EVENT"
@@ -32,6 +33,7 @@ def make_payload(
         robot,
         obstacle,
         error_code,
+        demo_epoch,
         estop=False,
         speed=None,
         cpu=None
@@ -40,6 +42,7 @@ def make_payload(
         "ts": now_kst_iso(),
         "robotId": robot["id"],
         "seq": robot["seq"],
+        "demoEpoch": demo_epoch,
 
         "state": {
             "online": robot["online"],
@@ -468,6 +471,8 @@ def main():
 
             start = time.time()
 
+            demo_epoch = redis_client.get(DEMO_EPOCH_KEY) or "0"
+
             with robots_lock:
                 for robot in robots_holder["robots"]:
                     # 5% 확률로 mission 변경
@@ -547,6 +552,7 @@ def main():
                         robot,
                         obstacle,
                         error,
+                        demo_epoch,
                         estop,
                         speed,
                         cpu
