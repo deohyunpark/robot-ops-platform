@@ -36,7 +36,7 @@ MQTT → Kafka → Redis/PostgreSQL → WebSocket 기반의 실시간 데이터 
 
 <div align="center">
 
-**개발 기간** 2026.04.16 ~ 2026.08.16 (약 4개월) · **개발 인원** 1인 (기획·설계·백엔드·프론트엔드·인프라 전 영역 단독 개발)
+**개발 기간** 2026.03.02 ~ 2026.08.14 (약 4개월) · **개발 인원** 1인 (기획·설계·백엔드·프론트엔드·인프라 전 영역 단독 개발)
 
 </div>
 
@@ -49,6 +49,7 @@ MQTT → Kafka → Redis/PostgreSQL → WebSocket 기반의 실시간 데이터 
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
+![Tests](https://img.shields.io/badge/Tests-8%20Passing-brightgreen)
 
 </div>
 
