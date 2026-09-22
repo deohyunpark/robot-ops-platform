@@ -1516,7 +1516,7 @@ AVG / P95 / MAX 비교
 
 <div align="center">
 
-**DeviceEvent `process()` — Redis·DB 원자성 문제 → TransactionSynchronization 기반 Side Effect 지연**
+**DeviceEvent `process()` — DB Commit 이후 Side Effect 처리 → TransactionSynchronization 기반 Side Effect 지연**
 
 </div>
 
