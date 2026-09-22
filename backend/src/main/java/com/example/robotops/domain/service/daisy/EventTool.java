@@ -53,6 +53,20 @@ public class EventTool {
                         """)
     @Transactional(readOnly = true)
     public List<DeviceEventResponse> getRecentRobotEvents(EventSearchRequest request) {
+
+        log.info("[DAISY TOOL] request={}", request);
+
+        if (request == null) {
+            request = new EventSearchRequest(
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+        }
+
+
         OffsetDateTime to = Optional.ofNullable(request.to())
                 .orElse(OffsetDateTime.now(ZoneOffset.ofHours(9)));
 

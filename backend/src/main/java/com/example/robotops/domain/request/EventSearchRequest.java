@@ -33,8 +33,7 @@ public record EventSearchRequest(
 
         @Nullable
         @ToolParam(
-                required = false,
-                description = "사용자가 지정하지 않으면 null"
+                required = false
         )
         @JsonPropertyDescription("""
                 조회 시작 시각.
@@ -51,8 +50,7 @@ public record EventSearchRequest(
 
         @Nullable
         @ToolParam(
-                required = false,
-                description = "사용자가 지정하지 않으면 null"
+                required = false
         )
         @JsonPropertyDescription("""
                 조회 종료 시각.
